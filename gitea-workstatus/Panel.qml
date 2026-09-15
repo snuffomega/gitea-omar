@@ -2,23 +2,27 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 import Quickshell
+import qs.Commons
+import qs.Ui as Ui
 
 import "Model.js" as Model
 import "components"
 
-PopupCard {
+Ui.PopupCard {
     id: panel
+
+    required property Item anchorItem
+    required property QtObject bar
 
     property var barWidget: null
     property string activeSection: "attention"
     property string repoFilter: ""
     property int selectedIndex: 0
     property bool isRefreshing: false
-    // Bind to barWidget.dataRevision so QML re-evaluates when data changes
     property int dataRev: barWidget ? barWidget.dataRevision : 0
 
-    width: 420
-    height: Math.min(contentCol.implicitHeight + 24, 600)
+    contentWidth: Style.space(420)
+    contentHeight: Math.min(contentCol.implicitHeight + Style.spacing.popupPadding * 2, Style.space(600))
 
     Component.onCompleted: {
         forceActiveFocus();
@@ -68,7 +72,6 @@ PopupCard {
         }
     }
 
-    // Re-populate when data revision changes
     onDataRevChanged: populateList()
 
     Keys.onPressed: function(event) {
@@ -103,7 +106,7 @@ PopupCard {
             refreshTimer.restart();
             event.accepted = true; break;
         case Qt.Key_Escape:
-            if (barWidget) barWidget.close();
+            panel.close();
             event.accepted = true; break;
         case Qt.Key_Tab:
             event.accepted = true; break;
@@ -127,9 +130,8 @@ PopupCard {
         updateSection(sectionOrder[(idx - 1 + sectionOrder.length) % sectionOrder.length]);
     }
 
-    // Compute badge counts reactively via dataRev dependency
     function badgeCount(section) {
-        void dataRev; // force re-evaluation
+        void dataRev;
         switch (section) {
             case "attention": return Model.getAttentionItems().length;
             case "running": return Model.getRunningJobs().length;
@@ -145,19 +147,18 @@ PopupCard {
     ColumnLayout {
         id: contentCol
         anchors.fill: parent
-        anchors.margins: 12
-        spacing: 8
+        spacing: Style.space(8)
 
-        // Header
         RowLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Style.space(8)
 
             Text {
                 text: "Gitea"
-                font.pixelSize: 16
+                font.family: Style.font.family
+                font.pixelSize: Style.space(16)
                 font.weight: Font.DemiBold
-                color: Quickshell.Colors.textPrimary
+                color: Color.text.primary
             }
 
             Text {
@@ -166,8 +167,9 @@ PopupCard {
                     var meta = Model.getMeta();
                     return meta ? meta.username : "";
                 }
-                font.pixelSize: 12
-                color: Quickshell.Colors.textMuted
+                font.family: Style.font.family
+                font.pixelSize: Style.space(12)
+                color: Color.text.muted
                 visible: text !== ""
             }
 
@@ -176,15 +178,17 @@ PopupCard {
             Text {
                 visible: barWidget && barWidget.stale
                 text: "stale"
-                font.pixelSize: 10
-                color: Quickshell.Colors.warning
+                font.family: Style.font.family
+                font.pixelSize: Style.space(10)
+                color: Color.status.warning
                 opacity: 0.8
             }
 
             Text {
                 text: isRefreshing ? "refreshing\u2026" : ""
-                font.pixelSize: 10
-                color: Quickshell.Colors.textMuted
+                font.family: Style.font.family
+                font.pixelSize: Style.space(10)
+                color: Color.text.muted
                 visible: isRefreshing
 
                 SequentialAnimation on opacity {
@@ -201,11 +205,11 @@ PopupCard {
                     var meta = Model.getMeta();
                     return meta ? Model.timeAgo(meta.collected_at) : "";
                 }
-                font.pixelSize: 10
-                color: Quickshell.Colors.textMuted
+                font.family: Style.font.family
+                font.pixelSize: Style.space(10)
+                color: Color.text.muted
             }
 
-            // Partial failure indicator
             Text {
                 text: {
                     void panel.dataRev;
@@ -213,8 +217,9 @@ PopupCard {
                     if (meta && meta.repo_failed > 0) return meta.repo_failed + " repo(s) unreachable";
                     return "";
                 }
-                font.pixelSize: 10
-                color: Quickshell.Colors.warning
+                font.family: Style.font.family
+                font.pixelSize: Style.space(10)
+                color: Color.status.warning
                 visible: text !== ""
             }
         }
@@ -222,47 +227,46 @@ PopupCard {
         Rectangle {
             Layout.fillWidth: true
             height: 1
-            color: Quickshell.Colors.border
+            color: Color.popups.border
         }
 
-        // Summary badges — counts are reactive via badgeCount()
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Style.space(6)
             visible: !barWidget || !barWidget.hasError
 
             SummaryBadge {
                 label: "Attention"
                 count: panel.badgeCount("attention")
-                accent: Quickshell.Colors.error
+                accent: Color.status.error
                 active: activeSection === "attention"
                 onClicked: updateSection("attention")
             }
             SummaryBadge {
                 label: "Running"
                 count: panel.badgeCount("running")
-                accent: Quickshell.Colors.warning
+                accent: Color.status.warning
                 active: activeSection === "running"
                 onClicked: updateSection("running")
             }
             SummaryBadge {
                 label: "Completed"
                 count: panel.badgeCount("completed")
-                accent: Quickshell.Colors.textMuted
+                accent: Color.text.muted
                 active: activeSection === "completed"
                 onClicked: updateSection("completed")
             }
             SummaryBadge {
                 label: "My PRs"
                 count: panel.badgeCount("my_prs")
-                accent: Quickshell.Colors.accent
+                accent: Color.accent.primary
                 active: activeSection === "my_prs"
                 onClicked: updateSection("my_prs")
             }
             SummaryBadge {
                 label: "Review"
                 count: panel.badgeCount("review")
-                accent: Quickshell.Colors.accentSecondary
+                accent: Color.accent.secondary
                 active: activeSection === "review"
                 onClicked: updateSection("review")
             }
@@ -282,7 +286,7 @@ PopupCard {
         Rectangle {
             Layout.fillWidth: true
             height: 1
-            color: Quickshell.Colors.border
+            color: Color.popups.border
             visible: listModel.count > 0
         }
 
@@ -309,12 +313,12 @@ PopupCard {
             model: listModel
             currentIndex: panel.selectedIndex
             clip: true
-            spacing: 2
+            spacing: Style.space(2)
             boundsBehavior: Flickable.StopAtBounds
 
             ScrollBar.vertical: ScrollBar {
                 policy: ScrollBar.AsNeeded
-                width: 4
+                width: Style.space(4)
             }
 
             delegate: Loader {
@@ -353,7 +357,7 @@ PopupCard {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 12
+            spacing: Style.space(12)
 
             Repeater {
                 model: [
@@ -363,18 +367,19 @@ PopupCard {
                     { key: "r", action: "refresh" }
                 ]
                 Row {
-                    spacing: 3
+                    spacing: Style.space(3)
                     Text {
                         text: modelData.key
-                        font.family: "monospace"
-                        font.pixelSize: 9
-                        color: Quickshell.Colors.textMuted
+                        font.family: Style.font.monospace
+                        font.pixelSize: Style.space(9)
+                        color: Color.text.muted
                         opacity: 0.6
                     }
                     Text {
                         text: modelData.action
-                        font.pixelSize: 9
-                        color: Quickshell.Colors.textMuted
+                        font.family: Style.font.family
+                        font.pixelSize: Style.space(9)
+                        color: Color.text.muted
                         opacity: 0.4
                     }
                 }

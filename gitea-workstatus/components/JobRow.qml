@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell
+import qs.Commons
 
 import "../Model.js" as Model
 
@@ -13,18 +13,18 @@ Item {
     signal openJob()
     signal openRepo()
 
-    implicitHeight: contentLayout.implicitHeight + 10
+    implicitHeight: contentLayout.implicitHeight + Style.space(10)
     width: parent ? parent.width : 0
 
     Rectangle {
         anchors.fill: parent
-        radius: 4
+        radius: Style.space(4)
         color: {
-            if (selected) return Qt.rgba(Quickshell.Colors.accent.r, Quickshell.Colors.accent.g, Quickshell.Colors.accent.b, 0.1);
-            if (mouseArea.containsMouse) return Qt.rgba(Quickshell.Colors.textPrimary.r, Quickshell.Colors.textPrimary.g, Quickshell.Colors.textPrimary.b, 0.04);
+            if (selected) return Qt.rgba(Color.accent.primary.r, Color.accent.primary.g, Color.accent.primary.b, 0.1);
+            if (mouseArea.containsMouse) return Qt.rgba(Color.text.primary.r, Color.text.primary.g, Color.text.primary.b, 0.04);
             return "transparent";
         }
-        border.color: selected ? Qt.rgba(Quickshell.Colors.accent.r, Quickshell.Colors.accent.g, Quickshell.Colors.accent.b, 0.3) : "transparent"
+        border.color: selected ? Qt.rgba(Color.accent.primary.r, Color.accent.primary.g, Color.accent.primary.b, 0.3) : "transparent"
         border.width: selected ? 1 : 0
 
         Behavior on color { ColorAnimation { duration: 120 } }
@@ -41,25 +41,25 @@ Item {
     ColumnLayout {
         id: contentLayout
         anchors.fill: parent
-        anchors.margins: 8
-        spacing: 3
+        anchors.margins: Style.space(8)
+        spacing: Style.space(3)
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Style.space(6)
 
             Rectangle {
-                width: 8; height: 8; radius: 4
+                width: Style.space(8); height: Style.space(8); radius: Style.space(4)
                 color: {
                     switch (data.status) {
                         case "running":
                         case "waiting":
-                        case "queued": return Quickshell.Colors.warning;
-                        case "success": return Quickshell.Colors.success;
-                        case "failure": return Quickshell.Colors.error;
+                        case "queued": return Color.status.warning;
+                        case "success": return Color.status.success;
+                        case "failure": return Color.status.error;
                         case "cancelled":
-                        case "skipped": return Quickshell.Colors.textMuted;
-                        default: return Quickshell.Colors.textMuted;
+                        case "skipped": return Color.text.muted;
+                        default: return Color.text.muted;
                     }
                 }
 
@@ -74,22 +74,24 @@ Item {
             Text {
                 Layout.fillWidth: true
                 text: data.workflow || ""
-                font.pixelSize: 12
-                color: Quickshell.Colors.textPrimary
+                font.family: Style.font.family
+                font.pixelSize: Style.space(12)
+                color: Color.text.primary
                 elide: Text.ElideRight
                 maximumLineCount: 1
             }
 
             Text {
                 text: data.status || ""
-                font.pixelSize: 10
+                font.family: Style.font.family
+                font.pixelSize: Style.space(10)
                 color: {
                     switch (data.status) {
                         case "running":
-                        case "waiting": return Quickshell.Colors.warning;
-                        case "success": return Quickshell.Colors.success;
-                        case "failure": return Quickshell.Colors.error;
-                        default: return Quickshell.Colors.textMuted;
+                        case "waiting": return Color.status.warning;
+                        case "success": return Color.status.success;
+                        case "failure": return Color.status.error;
+                        default: return Color.text.muted;
                     }
                 }
             }
@@ -97,13 +99,13 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Style.space(6)
 
             Text {
                 text: data.repo || ""
-                font.family: "monospace"
-                font.pixelSize: 10
-                color: Quickshell.Colors.accentSecondary
+                font.family: Style.font.monospace
+                font.pixelSize: Style.space(10)
+                color: Color.accent.secondary
                 opacity: repoMouse.containsMouse ? 1.0 : 0.7
 
                 MouseArea {
@@ -117,18 +119,19 @@ Item {
 
             Text {
                 text: data.branch || ""
-                font.family: "monospace"
-                font.pixelSize: 10
-                color: Quickshell.Colors.textSecondary
-                Layout.maximumWidth: 120
+                font.family: Style.font.monospace
+                font.pixelSize: Style.space(10)
+                color: Color.text.secondary
+                Layout.maximumWidth: Style.space(120)
                 elide: Text.ElideRight
             }
 
             Text {
                 visible: !!data.event
                 text: data.event || ""
-                font.pixelSize: 9
-                color: Quickshell.Colors.textMuted
+                font.family: Style.font.family
+                font.pixelSize: Style.space(9)
+                color: Color.text.muted
                 opacity: 0.5
             }
 
@@ -136,8 +139,9 @@ Item {
 
             Text {
                 text: Model.timeAgo(data.updated || data.started)
-                font.pixelSize: 10
-                color: Quickshell.Colors.textMuted
+                font.family: Style.font.family
+                font.pixelSize: Style.space(10)
+                color: Color.text.muted
                 opacity: 0.6
             }
         }

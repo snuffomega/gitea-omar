@@ -30,6 +30,17 @@ assert_neq() {
   fi
 }
 
+assert_contains() {
+  local desc="$1" needle="$2" haystack="$3"
+  if echo "$haystack" | grep -qi "$needle"; then
+    echo "  PASS: $desc"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL: $desc (expected to contain '$needle')"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
 assert_gt() {
   local desc="$1" threshold="$2" actual="$3"
   if [ "$actual" -gt "$threshold" ]; then
@@ -117,11 +128,11 @@ pr10_status=$(echo "$output" | jq -r '.sections.all_prs[] | select(.id == 10) | 
 pr44_status=$(echo "$output" | jq -r '.sections.all_prs[] | select(.id == 44) | .status_label')
 pr45_status=$(echo "$output" | jq -r '.sections.all_prs[] | select(.id == 45) | .status_label')
 
-assert_eq "PR #42 (approved + CI pass + mergeable) = ready" "ready" "$pr42_status"
+assert_eq "PR #42 (approved + CI pass + mergeable) = approved_ci_passed" "approved_ci_passed" "$pr42_status"
 assert_eq "PR #43 (changes req + CI fail) = ci_failed" "ci_failed" "$pr43_status"
 assert_eq "PR #10 (draft) = draft" "draft" "$pr10_status"
 assert_eq "PR #44 (mergeable=false) = conflicted" "conflicted" "$pr44_status"
-assert_neq "PR #45 (mergeable=null) != ready" "ready" "$pr45_status"
+assert_eq "PR #45 (no reviews, no CI, mergeable=null) = open" "open" "$pr45_status"
 
 echo ""
 
@@ -135,7 +146,7 @@ draft_prs=$(cat "$MOCK_DIR/pulls.json" | jq \
 draft_output=$(run_jq "$draft_prs" "[]")
 draft_status=$(echo "$draft_output" | jq -r '.sections.all_prs[0].status_label')
 assert_eq "draft with approvals + CI pass = draft" "draft" "$draft_status"
-assert_neq "draft never ready" "ready" "$draft_status"
+assert_neq "draft never approved_ci_passed" "approved_ci_passed" "$draft_status"
 
 echo ""
 
@@ -151,17 +162,17 @@ assert_eq "conflicted with approvals + CI pass = conflicted" "conflicted" "$conf
 
 echo ""
 
-# --- Test 5: mergeable=null never ready (regression for false//true) ---
-echo "Test 5: Unknown mergeability never ready"
+# --- Test 5: mergeable=null with approved + CI success ---
+echo "Test 5: Unknown mergeability still approved_ci_passed"
 null_merge_prs=$(cat "$MOCK_DIR/pulls.json" | jq \
   --argjson rev_ok "$(cat "$MOCK_DIR/reviews.json")" \
   --argjson ci_ok "$(cat "$MOCK_DIR/commit-status-success.json")" \
   '[.[4] | ._reviews = $rev_ok | ._commit_status = $ci_ok | ._repo = "testuser/webapp"]')
 null_merge_output=$(run_jq "$null_merge_prs" "[]")
 null_merge_status=$(echo "$null_merge_output" | jq -r '.sections.all_prs[0].status_label')
-assert_neq "mergeable=null never ready" "ready" "$null_merge_status"
+assert_eq "mergeable=null with approved+CI = approved_ci_passed" "approved_ci_passed" "$null_merge_status"
 blocker=$(echo "$null_merge_output" | jq -r '.sections.all_prs[0].blocker // ""')
-assert_neq "has blocker about mergeability" "" "$blocker"
+assert_contains "has blocker about mergeability" "ergeab" "$blocker"
 
 echo ""
 
@@ -179,7 +190,7 @@ superseded_changes=$(echo "$superseded_output" | jq '.sections.all_prs[0].review
 assert_eq "superseded: approved count = 1" "1" "$superseded_approved"
 assert_eq "superseded: changes_requested count = 0" "0" "$superseded_changes"
 superseded_status=$(echo "$superseded_output" | jq -r '.sections.all_prs[0].status_label')
-assert_eq "superseded review -> ready" "ready" "$superseded_status"
+assert_eq "superseded review -> approved_ci_passed" "approved_ci_passed" "$superseded_status"
 
 echo ""
 

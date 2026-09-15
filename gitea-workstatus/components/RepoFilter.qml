@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell
+import qs.Commons
 
 Item {
     id: filter
@@ -16,19 +16,19 @@ Item {
     RowLayout {
         id: filterRow
         anchors.fill: parent
-        spacing: 4
+        spacing: Style.space(4)
 
         Rectangle {
-            width: allText.implicitWidth + 10
-            height: 22
-            radius: 3
+            width: allText.implicitWidth + Style.space(10)
+            height: Style.space(22)
+            radius: Style.space(3)
             color: currentFilter === "" ?
-                Qt.rgba(Quickshell.Colors.accent.r, Quickshell.Colors.accent.g, Quickshell.Colors.accent.b, 0.15) :
+                Qt.rgba(Color.accent.primary.r, Color.accent.primary.g, Color.accent.primary.b, 0.15) :
                 (allMouse.containsMouse ?
-                    Qt.rgba(Quickshell.Colors.textPrimary.r, Quickshell.Colors.textPrimary.g, Quickshell.Colors.textPrimary.b, 0.06) :
+                    Qt.rgba(Color.text.primary.r, Color.text.primary.g, Color.text.primary.b, 0.06) :
                     "transparent")
             border.color: currentFilter === "" ?
-                Qt.rgba(Quickshell.Colors.accent.r, Quickshell.Colors.accent.g, Quickshell.Colors.accent.b, 0.3) :
+                Qt.rgba(Color.accent.primary.r, Color.accent.primary.g, Color.accent.primary.b, 0.3) :
                 "transparent"
             border.width: currentFilter === "" ? 1 : 0
 
@@ -36,8 +36,9 @@ Item {
                 id: allText
                 anchors.centerIn: parent
                 text: "All"
-                font.pixelSize: 10
-                color: currentFilter === "" ? Quickshell.Colors.textPrimary : Quickshell.Colors.textMuted
+                font.family: Style.font.family
+                font.pixelSize: Style.space(10)
+                color: currentFilter === "" ? Color.text.primary : Color.text.muted
             }
 
             MouseArea {
@@ -51,29 +52,29 @@ Item {
 
         Flickable {
             Layout.fillWidth: true
-            height: 22
+            height: Style.space(22)
             contentWidth: repoRow.implicitWidth
             clip: true
             boundsBehavior: Flickable.StopAtBounds
 
             Row {
                 id: repoRow
-                spacing: 4
+                spacing: Style.space(4)
 
                 Repeater {
                     model: filter.repos
                     Rectangle {
-                        width: repoText.implicitWidth + 10
-                        height: 22
-                        radius: 3
+                        width: repoText.implicitWidth + Style.space(10)
+                        height: Style.space(22)
+                        radius: Style.space(3)
                         property bool isActive: currentFilter === modelData
                         color: isActive ?
-                            Qt.rgba(Quickshell.Colors.accent.r, Quickshell.Colors.accent.g, Quickshell.Colors.accent.b, 0.15) :
+                            Qt.rgba(Color.accent.primary.r, Color.accent.primary.g, Color.accent.primary.b, 0.15) :
                             (chipMouse.containsMouse ?
-                                Qt.rgba(Quickshell.Colors.textPrimary.r, Quickshell.Colors.textPrimary.g, Quickshell.Colors.textPrimary.b, 0.06) :
+                                Qt.rgba(Color.text.primary.r, Color.text.primary.g, Color.text.primary.b, 0.06) :
                                 "transparent")
                         border.color: isActive ?
-                            Qt.rgba(Quickshell.Colors.accent.r, Quickshell.Colors.accent.g, Quickshell.Colors.accent.b, 0.3) :
+                            Qt.rgba(Color.accent.primary.r, Color.accent.primary.g, Color.accent.primary.b, 0.3) :
                             "transparent"
                         border.width: isActive ? 1 : 0
 
@@ -84,9 +85,9 @@ Item {
                                 var parts = modelData.split("/");
                                 return parts.length > 1 ? parts[1] : modelData;
                             }
-                            font.family: "monospace"
-                            font.pixelSize: 10
-                            color: isActive ? Quickshell.Colors.textPrimary : Quickshell.Colors.textSecondary
+                            font.family: Style.font.monospace
+                            font.pixelSize: Style.space(10)
+                            color: isActive ? Color.text.primary : Color.text.secondary
                         }
 
                         MouseArea {

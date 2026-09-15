@@ -1,23 +1,23 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell
+import qs.Commons
 
 Item {
     id: badge
 
     property string label: ""
     property int count: 0
-    property color accent: Quickshell.Colors.textMuted
+    property color accent: Color.text.muted
     property bool active: false
 
     signal clicked()
 
-    implicitWidth: badgeRow.implicitWidth + 12
-    implicitHeight: 24
+    implicitWidth: badgeRow.implicitWidth + Style.space(12)
+    implicitHeight: Style.space(24)
 
     Rectangle {
         anchors.fill: parent
-        radius: 3
+        radius: Style.space(3)
         color: {
             if (active) return Qt.rgba(accent.r, accent.g, accent.b, 0.15);
             if (mouseArea.containsMouse) return Qt.rgba(accent.r, accent.g, accent.b, 0.08);
@@ -40,19 +40,21 @@ Item {
     RowLayout {
         id: badgeRow
         anchors.centerIn: parent
-        spacing: 4
+        spacing: Style.space(4)
 
         Text {
             text: badge.count.toString()
-            font.pixelSize: 11
+            font.family: Style.font.family
+            font.pixelSize: Style.space(11)
             font.weight: badge.active ? Font.DemiBold : Font.Normal
-            color: badge.count > 0 ? badge.accent : Quickshell.Colors.textMuted
+            color: badge.count > 0 ? badge.accent : Color.text.muted
         }
 
         Text {
             text: badge.label
-            font.pixelSize: 10
-            color: badge.active ? Quickshell.Colors.textPrimary : Quickshell.Colors.textMuted
+            font.family: Style.font.family
+            font.pixelSize: Style.space(10)
+            color: badge.active ? Color.text.primary : Color.text.muted
         }
     }
 }

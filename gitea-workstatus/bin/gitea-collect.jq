@@ -74,7 +74,6 @@ def pr_status_label($user):
   elif .ci.state == "pending" and .ci.total > 0 then "ci_running"
   elif is_draft then "draft"
   elif is_conflicted then "conflicted"
-  elif .reviews.approved > 0 and .ci.state == "success" and is_mergeable then "ready"
   elif .reviews.approved > 0 and .ci.state == "success" then "approved_ci_passed"
   elif .reviews.approved > 0 then "approved"
   elif .ci.state == "success" then "ci_passed"
@@ -175,7 +174,7 @@ def run_status_bucket:
     changes_requested: [$classified_prs[] | select(.status_label == "changes_requested")] | length,
     running_jobs: [$processed_runs[] | select(.bucket == "running")] | length,
     open_prs: ($classified_prs | length),
-    ready_to_merge: [$classified_prs[] | select(.status_label == "ready")] | length
+    ready_to_merge: [$classified_prs[] | select(.status_label == "approved_ci_passed")] | length
   },
   sections: {
     attention: [$classified_prs[] | select(.needs_attention)] | sort_by(.updated) | reverse,
@@ -190,5 +189,5 @@ def run_status_bucket:
     )] | sort_by(.updated) | reverse,
     all_prs: $classified_prs | sort_by(.updated) | reverse
   },
-  repos: ($classified_prs | map(.repo) | unique | sort)
+  repos: (($classified_prs | map(.repo)) + ($processed_runs | map(.repo)) | unique | sort)
 }

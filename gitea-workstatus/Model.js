@@ -7,6 +7,7 @@ var _loading = false;
 var _mutedRepos = {};
 var _repoFilter = "";
 var _sectionFilter = "attention";
+var _initialLoad = true;
 
 // Notification state: keyed by "type:repo:id" → { status, notifiedAt }
 var _notifyState = {};
@@ -147,7 +148,7 @@ function getBarSummary() {
         var p = allPrs[i];
         if (p.status_label === "ci_failed") failed++;
         if (p.status_label === "review_requested") review++;
-        if (p.status_label === "ready") ready++;
+        if (p.status_label === "approved_ci_passed") ready++;
     }
 
     return {
@@ -168,6 +169,34 @@ function getBarSummary() {
 function getNewNotifications(notifyFailure, notifyReview) {
     var notes = [];
     if (!_data || !_data.sections) return notes;
+
+    // On cold start, populate state without firing notifications
+    if (_initialLoad) {
+        _initialLoad = false;
+        var initSeen = {};
+        var iPrs = filterMuted(_data.sections.all_prs || []);
+        for (var ii = 0; ii < iPrs.length; ii++) {
+            var ipr = iPrs[ii];
+            initSeen["ci:" + ipr.repo + ":" + ipr.id] = ipr.status_label;
+        }
+        var iRuns = filterMuted(_data.sections.recently_completed || []);
+        for (var ij = 0; ij < iRuns.length; ij++) {
+            var irun = iRuns[ij];
+            initSeen["run:" + irun.repo + ":" + irun.id] = irun.status;
+        }
+        var iRev = filterMuted(_data.sections.review_queue || []);
+        for (var ik = 0; ik < iRev.length; ik++) {
+            var irpr = iRev[ik];
+            initSeen["review:" + irpr.repo + ":" + irpr.id] = "review_requested";
+        }
+        var initNow = Date.now();
+        _notifyState = {};
+        for (var ikey in initSeen) {
+            _notifyState[ikey] = { status: initSeen[ikey], notifiedAt: initNow };
+        }
+        return notes;
+    }
+
     var now = Date.now();
     var seen = {};
 
@@ -252,9 +281,8 @@ function statusIcon(label) {
         case "changes_requested": return "\u21BA";
         case "review_requested": return "\u25CF";
         case "ci_running": return "\u25E6";
-        case "ready": return "\u2714";
+        case "approved_ci_passed": return "\u2714";
         case "approved": return "\u2713";
-        case "approved_ci_passed": return "\u2713";
         case "ci_passed": return "\u25CB";
         case "draft": return "\u25CC";
         case "conflicted": return "\u26A0";

@@ -160,18 +160,14 @@ assert("muted repo excluded from sections", true, afterMute.every(p => p.repo !=
 setMutedRepos("");
 
 console.log("");
-console.log("Test: Identity-based notifications (initial load)");
-// First load: should detect CI failures and review requests
-const notes1 = getNewNotifications(true, true);
-const ciNotes1 = notes1.filter(n => n.type === "failure");
-const revNotes1 = notes1.filter(n => n.type === "review");
-assert("initial: has CI failure notification", true, ciNotes1.length > 0);
-assert("initial: has review notification", true, revNotes1.length > 0);
-assert("initial: CI note mentions PR id", true, ciNotes1.some(n => n.message.indexOf("#43") !== -1));
+console.log("Test: Cold-start notification suppression");
+// First call after parseOverview: cold start — no notifications
+const notesCold = getNewNotifications(true, true);
+assert("cold start: zero notifications", 0, notesCold.length);
 
 console.log("");
-console.log("Test: Notifications do NOT repeat for same state");
-// Re-run without changing data: same PR still failed -> no new notification
+console.log("Test: Notifications do NOT repeat for same state (post cold-start)");
+// Second call with same data: state already seeded by cold start — still zero
 const notes1b = getNewNotifications(true, true);
 assert("repeat: no duplicate CI notification", 0, notes1b.filter(n => n.type === "failure").length);
 assert("repeat: no duplicate review notification", 0, notes1b.filter(n => n.type === "review").length);
@@ -181,7 +177,7 @@ console.log("Test: Notification on transition (PR fixes, new PR breaks)");
 // Load overview2 where PR #43 CI is now fixed
 parseOverview(JSON.stringify($overview2_json));
 const notes2 = getNewNotifications(true, true);
-// PR #43 moved from ci_failed -> not failed, so no failure notification for it
+// PR #43 moved from ci_failed -> not failed, so no new failure for it
 assert("transition: no CI notification for fixed PR", 0, notes2.filter(n => n.type === "failure").length);
 
 // Now load overview3 where a NEW PR #99 has CI failure
@@ -209,10 +205,9 @@ assert("empty input", "", timeAgo(""));
 console.log("");
 console.log("Test: statusIcon coverage");
 assert("ci_failed icon", "\u2718", statusIcon("ci_failed"));
-assert("ready icon", "\u2714", statusIcon("ready"));
+assert("approved_ci_passed icon", "\u2714", statusIcon("approved_ci_passed"));
 assert("draft icon", "\u25CC", statusIcon("draft"));
 assert("conflicted icon", "\u26A0", statusIcon("conflicted"));
-assert("approved_ci_passed icon", "\u2713", statusIcon("approved_ci_passed"));
 
 console.log("");
 console.log("===========================================");

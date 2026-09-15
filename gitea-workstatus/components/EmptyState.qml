@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell
+import qs.Commons
 
 Item {
     id: empty
@@ -12,7 +12,7 @@ Item {
     ColumnLayout {
         id: col
         anchors.centerIn: parent
-        spacing: 8
+        spacing: Style.space(8)
 
         Text {
             Layout.alignment: Qt.AlignHCenter
@@ -24,8 +24,8 @@ Item {
                     default: return "\u2022";
                 }
             }
-            font.pixelSize: 24
-            color: Quickshell.Colors.textMuted
+            font.pixelSize: Style.space(24)
+            color: Color.text.muted
             opacity: 0.3
         }
 
@@ -42,16 +42,18 @@ Item {
                     default: return "Nothing here";
                 }
             }
-            font.pixelSize: 12
-            color: Quickshell.Colors.textMuted
+            font.family: Style.font.family
+            font.pixelSize: Style.space(12)
+            color: Color.text.muted
         }
 
         Text {
             Layout.alignment: Qt.AlignHCenter
             visible: section === "attention"
             text: "All clear \u2014 your repos are healthy"
-            font.pixelSize: 10
-            color: Quickshell.Colors.textMuted
+            font.family: Style.font.family
+            font.pixelSize: Style.space(10)
+            color: Color.text.muted
             opacity: 0.5
         }
     }

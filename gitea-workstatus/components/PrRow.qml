@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell
+import qs.Commons
 
 import "../Model.js" as Model
 
@@ -14,18 +14,18 @@ Item {
     signal openPr()
     signal openRepo()
 
-    implicitHeight: contentLayout.implicitHeight + 12
+    implicitHeight: contentLayout.implicitHeight + Style.space(12)
     width: parent ? parent.width : 0
 
     Rectangle {
         anchors.fill: parent
-        radius: 4
+        radius: Style.space(4)
         color: {
-            if (selected) return Qt.rgba(Quickshell.Colors.accent.r, Quickshell.Colors.accent.g, Quickshell.Colors.accent.b, 0.1);
-            if (mouseArea.containsMouse) return Qt.rgba(Quickshell.Colors.textPrimary.r, Quickshell.Colors.textPrimary.g, Quickshell.Colors.textPrimary.b, 0.04);
+            if (selected) return Qt.rgba(Color.accent.primary.r, Color.accent.primary.g, Color.accent.primary.b, 0.1);
+            if (mouseArea.containsMouse) return Qt.rgba(Color.text.primary.r, Color.text.primary.g, Color.text.primary.b, 0.04);
             return "transparent";
         }
-        border.color: selected ? Qt.rgba(Quickshell.Colors.accent.r, Quickshell.Colors.accent.g, Quickshell.Colors.accent.b, 0.3) : "transparent"
+        border.color: selected ? Qt.rgba(Color.accent.primary.r, Color.accent.primary.g, Color.accent.primary.b, 0.3) : "transparent"
         border.width: selected ? 1 : 0
 
         Behavior on color { ColorAnimation { duration: 120 } }
@@ -42,28 +42,27 @@ Item {
     ColumnLayout {
         id: contentLayout
         anchors.fill: parent
-        anchors.margins: 8
-        spacing: 4
+        anchors.margins: Style.space(8)
+        spacing: Style.space(4)
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Style.space(6)
 
             Rectangle {
-                width: 8; height: 8; radius: 4
+                width: Style.space(8); height: Style.space(8); radius: Style.space(4)
                 color: {
                     switch (data.status_label) {
-                        case "ci_failed": return Quickshell.Colors.error;
-                        case "changes_requested": return Quickshell.Colors.error;
-                        case "review_requested": return Quickshell.Colors.accent;
-                        case "ci_running": return Quickshell.Colors.warning;
-                        case "ready": return Quickshell.Colors.success;
-                        case "approved":
-                        case "approved_ci_passed": return Quickshell.Colors.success;
-                        case "ci_passed": return Quickshell.Colors.info;
-                        case "draft": return Quickshell.Colors.textMuted;
-                        case "conflicted": return Quickshell.Colors.warning;
-                        default: return Quickshell.Colors.textMuted;
+                        case "ci_failed": return Color.status.error;
+                        case "changes_requested": return Color.status.error;
+                        case "review_requested": return Color.accent.primary;
+                        case "ci_running": return Color.status.warning;
+                        case "approved_ci_passed":
+                        case "approved": return Color.status.success;
+                        case "ci_passed": return Color.accent.secondary;
+                        case "draft": return Color.text.muted;
+                        case "conflicted": return Color.status.warning;
+                        default: return Color.text.muted;
                     }
                 }
 
@@ -78,60 +77,63 @@ Item {
             Text {
                 Layout.fillWidth: true
                 text: data.title || ""
-                font.pixelSize: 12
+                font.family: Style.font.family
+                font.pixelSize: Style.space(12)
                 font.weight: data.needs_attention ? Font.DemiBold : Font.Normal
-                color: Quickshell.Colors.textPrimary
+                color: Color.text.primary
                 elide: Text.ElideRight
                 maximumLineCount: 1
             }
 
             Rectangle {
                 visible: data.draft === true
-                width: draftText.implicitWidth + 8
-                height: draftText.implicitHeight + 4
-                radius: 2
-                color: Qt.rgba(Quickshell.Colors.textMuted.r, Quickshell.Colors.textMuted.g, Quickshell.Colors.textMuted.b, 0.15)
+                width: draftText.implicitWidth + Style.space(8)
+                height: draftText.implicitHeight + Style.space(4)
+                radius: Style.space(2)
+                color: Qt.rgba(Color.text.muted.r, Color.text.muted.g, Color.text.muted.b, 0.15)
                 Text {
                     id: draftText
                     anchors.centerIn: parent
                     text: "draft"
-                    font.pixelSize: 9
-                    color: Quickshell.Colors.textMuted
+                    font.family: Style.font.family
+                    font.pixelSize: Style.space(9)
+                    color: Color.text.muted
                 }
             }
 
             Rectangle {
                 visible: data.status_label === "conflicted"
-                width: conflictText.implicitWidth + 8
-                height: conflictText.implicitHeight + 4
-                radius: 2
-                color: Qt.rgba(Quickshell.Colors.warning.r, Quickshell.Colors.warning.g, Quickshell.Colors.warning.b, 0.15)
+                width: conflictText.implicitWidth + Style.space(8)
+                height: conflictText.implicitHeight + Style.space(4)
+                radius: Style.space(2)
+                color: Qt.rgba(Color.status.warning.r, Color.status.warning.g, Color.status.warning.b, 0.15)
                 Text {
                     id: conflictText
                     anchors.centerIn: parent
                     text: "conflicts"
-                    font.pixelSize: 9
-                    color: Quickshell.Colors.warning
+                    font.family: Style.font.family
+                    font.pixelSize: Style.space(9)
+                    color: Color.status.warning
                 }
             }
 
             Text {
                 text: "#" + (data.id || "")
-                font.family: "monospace"
-                font.pixelSize: 10
-                color: Quickshell.Colors.textMuted
+                font.family: Style.font.monospace
+                font.pixelSize: Style.space(10)
+                color: Color.text.muted
             }
         }
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Style.space(6)
 
             Text {
                 text: data.repo || ""
-                font.family: "monospace"
-                font.pixelSize: 10
-                color: Quickshell.Colors.accentSecondary
+                font.family: Style.font.monospace
+                font.pixelSize: Style.space(10)
+                color: Color.accent.secondary
                 opacity: repoMouse.containsMouse ? 1.0 : 0.7
 
                 MouseArea {
@@ -145,17 +147,17 @@ Item {
 
             Text {
                 text: "\u2192"
-                font.pixelSize: 9
-                color: Quickshell.Colors.textMuted
+                font.pixelSize: Style.space(9)
+                color: Color.text.muted
                 opacity: 0.4
             }
 
             Text {
                 text: data.branch || ""
-                font.family: "monospace"
-                font.pixelSize: 10
-                color: Quickshell.Colors.textSecondary
-                Layout.maximumWidth: 120
+                font.family: Style.font.monospace
+                font.pixelSize: Style.space(10)
+                color: Color.text.secondary
+                Layout.maximumWidth: Style.space(120)
                 elide: Text.ElideRight
             }
 
@@ -163,28 +165,30 @@ Item {
 
             Text {
                 text: data.author || ""
-                font.pixelSize: 10
-                color: Quickshell.Colors.textMuted
+                font.family: Style.font.family
+                font.pixelSize: Style.space(10)
+                color: Color.text.muted
             }
 
             Text {
                 text: Model.timeAgo(data.updated)
-                font.pixelSize: 10
-                color: Quickshell.Colors.textMuted
+                font.family: Style.font.family
+                font.pixelSize: Style.space(10)
+                color: Color.text.muted
                 opacity: 0.6
             }
         }
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 8
+            spacing: Style.space(8)
             visible: hasReviewInfo || hasCiInfo || !!data.blocker
 
             property bool hasReviewInfo: data.reviews && (data.reviews.approved > 0 || data.reviews.changes_requested > 0)
             property bool hasCiInfo: data.ci && data.ci.total > 0
 
             Row {
-                spacing: 4
+                spacing: Style.space(4)
                 visible: parent.hasReviewInfo
 
                 Text {
@@ -194,13 +198,14 @@ Item {
                         if (data.reviews.changes_requested > 0) parts.push("\u2718 " + data.reviews.changes_requested);
                         return parts.join("  ");
                     }
-                    font.pixelSize: 10
-                    color: data.reviews.changes_requested > 0 ? Quickshell.Colors.error : Quickshell.Colors.success
+                    font.family: Style.font.family
+                    font.pixelSize: Style.space(10)
+                    color: data.reviews.changes_requested > 0 ? Color.status.error : Color.status.success
                 }
             }
 
             Row {
-                spacing: 3
+                spacing: Style.space(3)
                 visible: parent.hasCiInfo
 
                 Text {
@@ -208,12 +213,13 @@ Item {
                         if (!data.ci) return "";
                         return data.ci.passed + "/" + data.ci.total + " checks";
                     }
-                    font.pixelSize: 10
+                    font.family: Style.font.family
+                    font.pixelSize: Style.space(10)
                     color: {
-                        if (!data.ci) return Quickshell.Colors.textMuted;
-                        if (data.ci.failed > 0) return Quickshell.Colors.error;
-                        if (data.ci.pending_count > 0) return Quickshell.Colors.warning;
-                        return Quickshell.Colors.success;
+                        if (!data.ci) return Color.text.muted;
+                        if (data.ci.failed > 0) return Color.status.error;
+                        if (data.ci.pending_count > 0) return Color.status.warning;
+                        return Color.status.success;
                     }
                 }
             }
@@ -223,35 +229,37 @@ Item {
             Text {
                 visible: !!data.blocker
                 text: data.blocker || ""
-                font.pixelSize: 10
+                font.family: Style.font.family
+                font.pixelSize: Style.space(10)
                 font.italic: true
-                color: Quickshell.Colors.error
+                color: Color.status.error
                 opacity: 0.85
-                Layout.maximumWidth: 200
+                Layout.maximumWidth: Style.space(200)
                 elide: Text.ElideRight
             }
         }
 
         Flow {
             Layout.fillWidth: true
-            spacing: 4
+            spacing: Style.space(4)
             visible: data.labels && data.labels.length > 0
 
             Repeater {
                 model: data.labels || []
                 Rectangle {
-                    width: labelText.implicitWidth + 8
-                    height: labelText.implicitHeight + 3
-                    radius: 2
-                    color: modelData.color ? ("#" + modelData.color) : Quickshell.Colors.surfaceSecondary
+                    width: labelText.implicitWidth + Style.space(8)
+                    height: labelText.implicitHeight + Style.space(3)
+                    radius: Style.space(2)
+                    color: modelData.color ? ("#" + modelData.color) : Color.popups.background
                     opacity: 0.7
 
                     Text {
                         id: labelText
                         anchors.centerIn: parent
                         text: modelData.name || ""
-                        font.pixelSize: 9
-                        color: Quickshell.Colors.textPrimary
+                        font.family: Style.font.family
+                        font.pixelSize: Style.space(9)
+                        color: Color.text.primary
                     }
                 }
             }
