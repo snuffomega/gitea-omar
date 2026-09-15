@@ -386,6 +386,186 @@ kill "$holder_pid" 2>/dev/null || true
 wait "$holder_pid" 2>/dev/null || true
 rm -rf "$tmpdir"
 
+# ── Test 14: Stale carry-forward triggers when EITHER prs OR runs empty (not both) ──
+echo "Test 14: Stale carry-forward on EITHER-empty (regression for && vs ||)"
+setup_env; tmpdir="$_SETUP_TMP"
+mock_state="$XDG_STATE_HOME/omarchy/gitea-workstatus/overview.json"
+
+# Write previous good data with recent timestamp
+recent_ts=$(date -u -d "1 hour ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > "$mock_state" << STALEDATA2
+{"meta":{"collected_at":"$recent_ts","stale":false},"summary":{"open_prs":3,"running_jobs":2},"sections":{"all_prs":[{"repo":"test/r","id":1}],"running":[{"repo":"test/r","id":99}],"recently_completed":[],"attention":[],"my_prs":[],"review_queue":[]},"repos":["test/r"]}
+STALEDATA2
+
+# Mock curl: returns 1 PR but ZERO runs (prs non-empty, runs empty)
+cat > "$tmpdir/curl" << 'EITHERCURL'
+#!/usr/bin/env bash
+url=""
+has_write_out=false
+for arg in "$@"; do
+  case "$arg" in
+    https://*) url="$arg" ;;
+    *http_code*) has_write_out=true ;;
+  esac
+done
+path=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
+case "$path" in
+  /user) echo '{"login":"testuser"}'; $has_write_out && printf '\n200' ;;
+  /user/repos) echo '[{"owner":{"login":"testuser"},"name":"somerepo","has_pull_requests":true}]'; $has_write_out && printf '\n200' ;;
+  /repos/*/pulls) echo '[{"number":1,"title":"PR 1","state":"open","draft":false,"user":{"login":"testuser"},"head":{"ref":"main","sha":"abc"},"base":{"ref":"main"},"created_at":"2026-09-15T09:00:00Z","updated_at":"2026-09-15T09:00:00Z","html_url":"https://mock.test/testuser/somerepo/pulls/1","mergeable":true,"labels":[],"requested_reviewers":[]}]'; $has_write_out && printf '\n200' ;;
+  /repos/*/pulls/*/reviews) echo '[]'; $has_write_out && printf '\n200' ;;
+  /repos/*/commits/*/status) echo '{}'; $has_write_out && printf '\n200' ;;
+  /repos/*/actions/runs) echo '{"total_count":0,"workflow_runs":[]}'; $has_write_out && printf '\n200' ;;
+  *) echo '[]'; $has_write_out && printf '\n200' ;;
+esac
+exit 0
+EITHERCURL
+chmod +x "$tmpdir/curl"
+
+PATH="$tmpdir:$PATH" bash "$COLLECTOR" 2>/dev/null || true
+
+# With the bug (&&), prs=1 and runs=0 means the condition fails and stale is NOT set.
+# The fix (||) means EITHER empty triggers stale.
+stale_flag=$(jq '.meta.stale // false' "$mock_state" 2>/dev/null)
+assert_eq "stale flag set when runs empty but prs non-empty" "true" "$stale_flag"
+rm -rf "$tmpdir"
+
+# ── Test 15: Pagination failure on later page ──
+echo "Test 15: Pagination failure on later page"
+setup_env; tmpdir="$_SETUP_TMP"
+mock_state="$XDG_STATE_HOME/omarchy/gitea-workstatus/overview.json"
+
+# Mock: page 1 of /user/repos returns 50 repos (full page), page 2 returns 500
+cat > "$tmpdir/curl" << 'PAGINATIONCURL'
+#!/usr/bin/env bash
+url=""
+has_write_out=false
+for arg in "$@"; do
+  case "$arg" in
+    https://*) url="$arg" ;;
+    *http_code*) has_write_out=true ;;
+  esac
+done
+path=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
+page=$(echo "$url" | grep -oP 'page=\K[0-9]+' || echo "1")
+
+case "$path" in
+  /user) echo '{"login":"testuser"}'; $has_write_out && printf '\n200' ;;
+  /user/repos)
+    if [ "$page" = "1" ]; then
+      # Return 50 repos (full page, so collector will try page 2)
+      jq -n '[range(50) | {"owner":{"login":"testuser"},"name":("repo" + (.|tostring)),"has_pull_requests":true}]'
+      $has_write_out && printf '\n200'
+    else
+      # Page 2 fails
+      echo '{"message":"Internal Server Error"}'
+      $has_write_out && printf '\n500'
+    fi
+    ;;
+  /repos/*/pulls) echo '[]'; $has_write_out && printf '\n200' ;;
+  /repos/*/actions/runs) echo '{"total_count":0,"workflow_runs":[]}'; $has_write_out && printf '\n200' ;;
+  *) echo '[]'; $has_write_out && printf '\n200' ;;
+esac
+exit 0
+PAGINATIONCURL
+chmod +x "$tmpdir/curl"
+
+PATH="$tmpdir:$PATH" bash "$COLLECTOR" 2>/dev/null || true
+
+# Page 1 succeeded with 50 repos. Page 2 failed. The collector should still
+# produce output with the 50 repos from page 1, not die entirely.
+if [ -f "$mock_state" ] && jq -e 'has("sections")' "$mock_state" >/dev/null 2>&1; then
+  repo_count=$(jq '.meta.repo_count // 0' "$mock_state" 2>/dev/null)
+  assert_eq "page 1 repos preserved on page 2 failure" "true" "$([ "$repo_count" -ge 50 ] && echo true || echo false)"
+else
+  echo "  FAIL: collector died on later-page failure instead of using partial results"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "$tmpdir"
+
+# ── Test 16: Actions 500 vs 404 distinction ──
+echo "Test 16: Actions 500 vs 404 distinction"
+setup_env; tmpdir="$_SETUP_TMP"
+mock_state="$XDG_STATE_HOME/omarchy/gitea-workstatus/overview.json"
+
+# Mock: repos succeed, PRs succeed, Actions returns 500 (server error, not 404)
+cat > "$tmpdir/curl" << 'ACTION500CURL'
+#!/usr/bin/env bash
+url=""
+has_write_out=false
+for arg in "$@"; do
+  case "$arg" in
+    https://*) url="$arg" ;;
+    *http_code*) has_write_out=true ;;
+  esac
+done
+path=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
+case "$path" in
+  /user) echo '{"login":"testuser"}'; $has_write_out && printf '\n200' ;;
+  /user/repos) echo '[{"owner":{"login":"testuser"},"name":"webapp","has_pull_requests":true}]'; $has_write_out && printf '\n200' ;;
+  /repos/*/pulls) echo '[{"number":1,"title":"PR 1","state":"open","draft":false,"user":{"login":"testuser"},"head":{"ref":"main","sha":"abc"},"base":{"ref":"main"},"created_at":"2026-09-15T09:00:00Z","updated_at":"2026-09-15T09:00:00Z","html_url":"https://mock.test/testuser/webapp/pulls/1","mergeable":true,"labels":[],"requested_reviewers":[]}]'; $has_write_out && printf '\n200' ;;
+  /repos/*/pulls/*/reviews) echo '[]'; $has_write_out && printf '\n200' ;;
+  /repos/*/commits/*/status) echo '{}'; $has_write_out && printf '\n200' ;;
+  /repos/*/actions/runs) echo '{"message":"Internal Server Error"}'; $has_write_out && printf '\n500' ;;
+  *) echo '[]'; $has_write_out && printf '\n200' ;;
+esac
+exit 0
+ACTION500CURL
+chmod +x "$tmpdir/curl"
+
+PATH="$tmpdir:$PATH" bash "$COLLECTOR" 2>/dev/null || true
+
+# Actions 500 should mark repo as partial failure (repo_failed > 0)
+# Actions 404 would mean "not enabled" and should NOT be a failure
+if [ -f "$mock_state" ] && jq -e 'has("meta")' "$mock_state" >/dev/null 2>&1; then
+  repo_failed=$(jq '.meta.repo_failed // 0' "$mock_state" 2>/dev/null)
+  assert_eq "Actions 500 counted as partial failure" "true" "$([ "$repo_failed" -gt 0 ] && echo true || echo false)"
+else
+  echo "  FAIL: no output for Actions 500 test"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "$tmpdir"
+
+# ── Test 17: Actions 404 is NOT a failure ──
+echo "Test 17: Actions 404 is not a failure"
+setup_env; tmpdir="$_SETUP_TMP"
+mock_state="$XDG_STATE_HOME/omarchy/gitea-workstatus/overview.json"
+
+cat > "$tmpdir/curl" << 'ACTION404CURL'
+#!/usr/bin/env bash
+url=""
+has_write_out=false
+for arg in "$@"; do
+  case "$arg" in
+    https://*) url="$arg" ;;
+    *http_code*) has_write_out=true ;;
+  esac
+done
+path=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
+case "$path" in
+  /user) echo '{"login":"testuser"}'; $has_write_out && printf '\n200' ;;
+  /user/repos) echo '[{"owner":{"login":"testuser"},"name":"webapp","has_pull_requests":true}]'; $has_write_out && printf '\n200' ;;
+  /repos/*/pulls) echo '[{"number":1,"title":"PR 1","state":"open","draft":false,"user":{"login":"testuser"},"head":{"ref":"main","sha":"abc"},"base":{"ref":"main"},"created_at":"2026-09-15T09:00:00Z","updated_at":"2026-09-15T09:00:00Z","html_url":"https://mock.test/testuser/webapp/pulls/1","mergeable":true,"labels":[],"requested_reviewers":[]}]'; $has_write_out && printf '\n200' ;;
+  /repos/*/pulls/*/reviews) echo '[]'; $has_write_out && printf '\n200' ;;
+  /repos/*/commits/*/status) echo '{}'; $has_write_out && printf '\n200' ;;
+  /repos/*/actions/runs) echo '{"message":"Not Found"}'; $has_write_out && printf '\n404' ;;
+  *) echo '[]'; $has_write_out && printf '\n200' ;;
+esac
+exit 0
+ACTION404CURL
+chmod +x "$tmpdir/curl"
+
+PATH="$tmpdir:$PATH" bash "$COLLECTOR" 2>/dev/null || true
+
+if [ -f "$mock_state" ] && jq -e 'has("meta")' "$mock_state" >/dev/null 2>&1; then
+  repo_failed=$(jq '.meta.repo_failed // 0' "$mock_state" 2>/dev/null)
+  assert_eq "Actions 404 NOT counted as failure" "0" "$repo_failed"
+else
+  echo "  FAIL: no output for Actions 404 test"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "$tmpdir"
+
 echo ""
 echo "==========================================="
 echo "Results: $PASS passed, $FAIL failed"

@@ -22,7 +22,7 @@ Ui.PopupCard {
     property int dataRev: barWidget ? barWidget.dataRevision : 0
 
     contentWidth: Style.space(420)
-    contentHeight: Math.min(contentCol.implicitHeight + Style.spacing.popupPadding * 2, Style.space(600))
+    contentHeight: Math.min(contentCol.implicitHeight + Style.space(24), Style.space(600))
 
     Component.onCompleted: {
         forceActiveFocus();

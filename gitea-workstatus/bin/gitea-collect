@@ -82,7 +82,8 @@ api() {
 }
 
 # api_paginated ENDPOINT LIMIT MAX_PAGES [EXTRA_PARAMS]
-# Returns merged JSON array. Exit 1 if zero pages succeeded.
+# Returns merged JSON array on stdout. Exit 0 if >=1 page succeeded, exit 1 if zero.
+# A failure on a later page does NOT discard earlier pages — partial data is returned.
 api_paginated() {
   local endpoint="$1"
   local limit="${2:-50}"
@@ -149,6 +150,24 @@ fetch_commit_status() {
 fetch_action_runs() {
   local owner="$1" repo="$2"
   api "/repos/${owner}/${repo}/actions/runs" 1 20
+}
+
+# fetch_action_runs_with_code: returns "HTTP_CODE BODY" on stdout, exit 0 always.
+# Lets caller distinguish 404 (Actions not enabled) from 500 (server error).
+fetch_action_runs_with_code() {
+  local owner="$1" repo="$2"
+  local url="${GITEA_URL}/api/v1/repos/${owner}/${repo}/actions/runs?page=1&limit=20"
+  local response http_code body
+  response=$(curl -sS --max-time 15 -w '\n%{http_code}' \
+    -H "Authorization: token $GITEA_TOKEN" \
+    -H "Accept: application/json" \
+    "$url" 2>/dev/null) || { echo "404"; return 0; }
+
+  http_code=$(echo "$response" | tail -1)
+  body=$(echo "$response" | sed '$d')
+  echo "${http_code}"
+  echo "$body"
+  return 0
 }
 
 now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -220,17 +239,21 @@ for row in $(echo "$repos_json" | jq -r '.[] | @base64'); do
     echo "$prs" > "$tmpdir/prs_${idx}.json"
 
     # Always attempt Actions runs regardless of has_pull_requests
-    runs_raw=$(fetch_action_runs "$owner" "$repo" 2>/dev/null) || runs_raw=""
-    if [ -n "$runs_raw" ] && echo "$runs_raw" | jq -e '.workflow_runs' >/dev/null 2>&1; then
+    # Distinguish 404 (Actions not enabled — ok) from 500 (server error — partial)
+    runs_output=$(fetch_action_runs_with_code "$owner" "$repo" 2>/dev/null) || runs_output="404"
+    runs_http_code=$(echo "$runs_output" | head -1)
+    runs_raw=$(echo "$runs_output" | sed '1d')
+
+    if [ "$runs_http_code" = "200" ] && [ -n "$runs_raw" ] && echo "$runs_raw" | jq -e '.workflow_runs' >/dev/null 2>&1; then
       echo "$runs_raw" | jq --arg fn "${owner}/${repo}" \
         '[.workflow_runs[]? | . + {"_repo": $fn}]' > "$tmpdir/runs_${idx}.json"
-    elif [ -n "$runs_raw" ] && echo "$runs_raw" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    elif [ "$runs_http_code" = "200" ] && [ -n "$runs_raw" ] && echo "$runs_raw" | jq -e 'type == "array"' >/dev/null 2>&1; then
       echo "$runs_raw" | jq --arg fn "${owner}/${repo}" \
         '[.[]? | . + {"_repo": $fn}]' > "$tmpdir/runs_${idx}.json"
     else
       echo "[]" > "$tmpdir/runs_${idx}.json"
-      # Actions endpoint returning 404 means Actions disabled — not an error
-      if [ -n "$runs_raw" ]; then
+      # 404 = Actions not enabled (ok). 500 or other = server error (partial).
+      if [ "$runs_http_code" != "404" ]; then
         repo_status="partial"
       fi
     fi
@@ -275,8 +298,7 @@ done
 pr_count_now=$(echo "$all_prs" | jq 'length')
 run_count_now=$(echo "$all_runs" | jq 'length')
 
-if [ "$pr_count_now" -eq 0 ] && \
-   [ "$run_count_now" -eq 0 ] && \
+if { [ "$pr_count_now" -eq 0 ] || [ "$run_count_now" -eq 0 ]; } && \
    [ "$repo_attempted" -gt 0 ] && \
    [ -f "$OUTPUT" ]; then
   prev_ts=$(jq -r '.meta.collected_at // empty' "$OUTPUT" 2>/dev/null || echo "")
