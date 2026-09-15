@@ -2,13 +2,11 @@ import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 import Quickshell
-import Omarchy.Themes
-import Omarchy.Widgets
 
 import "Model.js" as Model
 import "components"
 
-PanelSurface {
+PopupCard {
     id: panel
 
     property var barWidget: null
@@ -16,14 +14,11 @@ PanelSurface {
     property string repoFilter: ""
     property int selectedIndex: 0
     property bool isRefreshing: false
+    // Bind to barWidget.dataRevision so QML re-evaluates when data changes
+    property int dataRev: barWidget ? barWidget.dataRevision : 0
 
-    width: Style.space(420)
-    height: Math.min(contentCol.implicitHeight + Style.space(24), Style.space(600))
-
-    color: Palette.surface.primary
-    border.color: Palette.border.subtle
-    border.width: 1
-    radius: Style.cornerRadius
+    width: 420
+    height: Math.min(contentCol.implicitHeight + 24, 600)
 
     Component.onCompleted: {
         forceActiveFocus();
@@ -34,7 +29,6 @@ PanelSurface {
         activeSection = section;
         Model.setSectionFilter(section);
         selectedIndex = 0;
-        listModel.clear();
         populateList();
     }
 
@@ -42,7 +36,6 @@ PanelSurface {
         repoFilter = repo;
         Model.setRepoFilter(repo);
         selectedIndex = 0;
-        listModel.clear();
         populateList();
     }
 
@@ -75,7 +68,9 @@ PanelSurface {
         }
     }
 
-    // Keyboard navigation
+    // Re-populate when data revision changes
+    onDataRevChanged: populateList()
+
     Keys.onPressed: function(event) {
         switch (event.key) {
         case Qt.Key_J:
@@ -132,57 +127,64 @@ PanelSurface {
         updateSection(sectionOrder[(idx - 1 + sectionOrder.length) % sectionOrder.length]);
     }
 
+    // Compute badge counts reactively via dataRev dependency
+    function badgeCount(section) {
+        void dataRev; // force re-evaluation
+        switch (section) {
+            case "attention": return Model.getAttentionItems().length;
+            case "running": return Model.getRunningJobs().length;
+            case "completed": return Model.getRecentlyCompleted().length;
+            case "my_prs": return Model.getMyPrs().length;
+            case "review": return Model.getReviewQueue().length;
+            default: return 0;
+        }
+    }
+
     ListModel { id: listModel }
 
-    // === Panel Layout ===
     ColumnLayout {
         id: contentCol
         anchors.fill: parent
-        anchors.margins: Style.space(12)
-        spacing: Style.space(8)
+        anchors.margins: 12
+        spacing: 8
 
         // Header
         RowLayout {
             Layout.fillWidth: true
-            spacing: Style.space(8)
+            spacing: 8
 
             Text {
                 text: "Gitea"
-                font.family: Style.font.family
-                font.pixelSize: Style.space(16)
+                font.pixelSize: 16
                 font.weight: Font.DemiBold
-                color: Palette.text.primary
+                color: Quickshell.Colors.textPrimary
             }
 
             Text {
                 text: {
+                    void panel.dataRev;
                     var meta = Model.getMeta();
                     return meta ? meta.username : "";
                 }
-                font.family: Style.font.family
-                font.pixelSize: Style.space(12)
-                color: Palette.text.muted
+                font.pixelSize: 12
+                color: Quickshell.Colors.textMuted
                 visible: text !== ""
             }
 
             Item { Layout.fillWidth: true }
 
-            // Stale indicator
             Text {
                 visible: barWidget && barWidget.stale
                 text: "stale"
-                font.family: Style.font.family
-                font.pixelSize: Style.space(10)
-                color: Palette.status.warning
+                font.pixelSize: 10
+                color: Quickshell.Colors.warning
                 opacity: 0.8
             }
 
-            // Refresh indicator
             Text {
                 text: isRefreshing ? "refreshing\u2026" : ""
-                font.family: Style.font.family
-                font.pixelSize: Style.space(10)
-                color: Palette.text.muted
+                font.pixelSize: 10
+                color: Quickshell.Colors.textMuted
                 visible: isRefreshing
 
                 SequentialAnimation on opacity {
@@ -193,63 +195,74 @@ PanelSurface {
                 }
             }
 
-            // Last updated
             Text {
                 text: {
+                    void panel.dataRev;
                     var meta = Model.getMeta();
                     return meta ? Model.timeAgo(meta.collected_at) : "";
                 }
-                font.family: Style.font.family
-                font.pixelSize: Style.space(10)
-                color: Palette.text.muted
+                font.pixelSize: 10
+                color: Quickshell.Colors.textMuted
+            }
+
+            // Partial failure indicator
+            Text {
+                text: {
+                    void panel.dataRev;
+                    var meta = Model.getMeta();
+                    if (meta && meta.repo_failed > 0) return meta.repo_failed + " repo(s) unreachable";
+                    return "";
+                }
+                font.pixelSize: 10
+                color: Quickshell.Colors.warning
+                visible: text !== ""
             }
         }
 
-        // Separator
         Rectangle {
             Layout.fillWidth: true
             height: 1
-            color: Palette.border.subtle
+            color: Quickshell.Colors.border
         }
 
-        // Summary badges row
+        // Summary badges — counts are reactive via badgeCount()
         RowLayout {
             Layout.fillWidth: true
-            spacing: Style.space(6)
+            spacing: 6
             visible: !barWidget || !barWidget.hasError
 
             SummaryBadge {
                 label: "Attention"
-                count: Model.getBarSummary().attention
-                accent: Palette.status.error
+                count: panel.badgeCount("attention")
+                accent: Quickshell.Colors.error
                 active: activeSection === "attention"
                 onClicked: updateSection("attention")
             }
             SummaryBadge {
                 label: "Running"
-                count: Model.getBarSummary().running
-                accent: Palette.status.warning
+                count: panel.badgeCount("running")
+                accent: Quickshell.Colors.warning
                 active: activeSection === "running"
                 onClicked: updateSection("running")
             }
             SummaryBadge {
                 label: "Completed"
-                count: Model.getRecentlyCompleted().length
-                accent: Palette.text.muted
+                count: panel.badgeCount("completed")
+                accent: Quickshell.Colors.textMuted
                 active: activeSection === "completed"
                 onClicked: updateSection("completed")
             }
             SummaryBadge {
                 label: "My PRs"
-                count: Model.getMyPrs().length
-                accent: Palette.accent.primary
+                count: panel.badgeCount("my_prs")
+                accent: Quickshell.Colors.accent
                 active: activeSection === "my_prs"
                 onClicked: updateSection("my_prs")
             }
             SummaryBadge {
                 label: "Review"
-                count: Model.getReviewQueue().length
-                accent: Palette.accent.secondary
+                count: panel.badgeCount("review")
+                accent: Quickshell.Colors.accentSecondary
                 active: activeSection === "review"
                 onClicked: updateSection("review")
             }
@@ -257,25 +270,22 @@ PanelSurface {
             Item { Layout.fillWidth: true }
         }
 
-        // Repo filter
         RepoFilter {
             id: repoFilterBar
             Layout.fillWidth: true
-            repos: Model.getAllRepos()
+            repos: { void panel.dataRev; return Model.getAllRepos(); }
             currentFilter: panel.repoFilter
             onFilterChanged: function(repo) { panel.setRepoFilter(repo) }
-            visible: Model.getAllRepos().length > 1
+            visible: { void panel.dataRev; return Model.getAllRepos().length > 1; }
         }
 
-        // Separator
         Rectangle {
             Layout.fillWidth: true
             height: 1
-            color: Palette.border.subtle
+            color: Quickshell.Colors.border
             visible: listModel.count > 0
         }
 
-        // Error state
         ErrorState {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -284,7 +294,6 @@ PanelSurface {
             giteaUrl: barWidget ? barWidget.giteaUrl : ""
         }
 
-        // Empty state
         EmptyState {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -292,7 +301,6 @@ PanelSurface {
             section: activeSection
         }
 
-        // Item list
         ListView {
             id: itemList
             Layout.fillWidth: true
@@ -301,12 +309,12 @@ PanelSurface {
             model: listModel
             currentIndex: panel.selectedIndex
             clip: true
-            spacing: Style.space(2)
+            spacing: 2
             boundsBehavior: Flickable.StopAtBounds
 
             ScrollBar.vertical: ScrollBar {
                 policy: ScrollBar.AsNeeded
-                width: Style.space(4)
+                width: 4
             }
 
             delegate: Loader {
@@ -321,7 +329,11 @@ PanelSurface {
                     PrRow {
                         data: parsedData
                         selected: isSelected
-                        giteaUrl: barWidget ? (Model.getMeta() ? Model.getMeta().gitea_url : "") : ""
+                        giteaUrl: {
+                            void panel.dataRev;
+                            var meta = Model.getMeta();
+                            return meta ? meta.gitea_url : "";
+                        }
                         onOpenPr: Qt.openUrlExternally(data.url)
                         onOpenRepo: panel.openRepo(data.repo)
                     }
@@ -339,10 +351,9 @@ PanelSurface {
             }
         }
 
-        // Footer with keyboard hints
         RowLayout {
             Layout.fillWidth: true
-            spacing: Style.space(12)
+            spacing: 12
 
             Repeater {
                 model: [
@@ -352,31 +363,22 @@ PanelSurface {
                     { key: "r", action: "refresh" }
                 ]
                 Row {
-                    spacing: Style.space(3)
+                    spacing: 3
                     Text {
                         text: modelData.key
-                        font.family: Style.font.monospace
-                        font.pixelSize: Style.space(9)
-                        color: Palette.text.muted
+                        font.family: "monospace"
+                        font.pixelSize: 9
+                        color: Quickshell.Colors.textMuted
                         opacity: 0.6
                     }
                     Text {
                         text: modelData.action
-                        font.family: Style.font.family
-                        font.pixelSize: Style.space(9)
-                        color: Palette.text.muted
+                        font.pixelSize: 9
+                        color: Quickshell.Colors.textMuted
                         opacity: 0.4
                     }
                 }
             }
-        }
-    }
-
-    // Reload when data changes
-    Connections {
-        target: barWidget
-        function onBarSummaryChanged() {
-            populateList();
         }
     }
 }

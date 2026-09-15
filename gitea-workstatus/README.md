@@ -1,36 +1,47 @@
-# gitea.workstatus — Gitea Work Status for Omarchy
+# gitea.workstatus — Gitea Work Status for Omarchy 4
 
 A native Omarchy shell bar widget that monitors your self-hosted Gitea instance:
 open PRs, review requests, CI status, and running jobs — all in one glance.
+
+**Requires Gitea >= 1.19.** Actions/CI monitoring requires Gitea >= 1.20.
 
 ## Features
 
 - **Compact bar summary**: failed CI, pending reviews, running jobs — color-coded,
   pulsing when active, quiet when healthy
-- **Prioritized panel**: Needs Attention → Running → Recently Completed → My PRs → Review Queue
-- **Blocker explanations**: a passing CI alone does not mean ready to merge —
-  blockers surface review state, merge conflicts, and missing approvals
-- **One-click navigation**: open any PR, failed job, or repository directly in
-  your browser
-- **Repo filtering**: select a repo to focus on, or mute repos you do not care about
-- **Keyboard-driven**: j/k navigate, h/l switch sections, Enter opens, r refreshes, Esc closes
-- **Notifications**: alerts on new CI failures and review requests, with 10-minute
-  deduplication to avoid noise
-- **Stale data handling**: if a connection drops, the last good data is carried
-  forward (marked stale) for up to 6 hours
-- **Parallel collection**: each repo is collected concurrently — the run costs the
-  slowest repo, not the sum
+- **Prioritized panel**: Attention → Running → Completed → My PRs → Review Queue
+- **Blocker explanations**: passing CI alone does not mean ready to merge — the
+  plugin checks approvals, merge conflicts, draft status, and mergeability
+- **Latest review per reviewer**: if a reviewer requests changes then later
+  approves, only the latest review counts
+- **One-click navigation**: open any PR, failed job, or repository directly
+- **Repo filtering**: focus on one repo, or mute repos you do not care about
+  (muted repos are excluded from counts and notifications)
+- **Keyboard-driven**: j/k navigate, h/l switch sections, Enter opens, r refreshes
+- **Identity-based notifications**: alerts fire on status transitions per PR/run,
+  not aggregate counts — a PR that stays failed does not re-alert, but a new
+  failure always does even if the total count stays the same
+- **Stale data carry-forward**: if connectivity drops, last good data is preserved
+  (marked stale) for up to `maxStaleHours`
+- **Atomic writes**: output JSON is written atomically via temp+rename
+- **Ownership-safe locking**: the lock file tracks its owner PID; a skipped
+  invocation never removes another collector's lock
 
-## Requirements
+## Runtime dependencies
 
-- [Omarchy 4 (Quattro)](https://omarchy.org) with Quickshell
-- `curl`, `jq` (both are standard on Omarchy)
-- A Gitea instance with API access (token with `read:issue`, `read:repository`,
-  `read:user` scopes)
+| Dependency | Purpose | Provided by Omarchy |
+|------------|---------|---------------------|
+| `bash` | Collector script | Yes |
+| `curl` | Gitea API calls | Yes |
+| `jq` (>= 1.6) | JSON transforms | Yes |
+| `coreutils` (`mktemp`, `stat`, `date`, `base64`) | Utilities | Yes |
+| Quickshell | QML runtime | Yes (omarchy-shell) |
+
+No additional packages need to be installed on a standard Omarchy 4 system.
 
 ## Install
 
-### 1. Clone into your plugins directory
+### 1. Copy into your plugins directory
 
 ```bash
 mkdir -p ~/.config/omarchy/plugins
@@ -51,7 +62,7 @@ chmod 600 ~/.config/gitea-workstatus/credentials
 ```
 
 Generate a token at `https://your-gitea/user/settings/applications` with
-read-only scopes.
+read-only scopes: `read:issue`, `read:repository`, `read:user`.
 
 ### 3. Enable the plugin
 
@@ -65,32 +76,29 @@ Or force discovery:
 omarchy-shell shell rescanPlugins
 ```
 
-The widget appears in the right section of your bar by default.
-
 ## Configuration
 
-Settings are exposed through the Omarchy plugin settings UI. You can also
-set them in the manifest defaults:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `refreshIntervalSec` | 180 | How often to poll Gitea (seconds) |
-| `giteaUrl` | — | Your Gitea instance URL |
-| `maxStaleHours` | 6 | Hours before stale data is hidden |
-| `notifyOnFailure` | true | Desktop notification on CI failure |
-| `notifyOnReviewRequest` | true | Notification on new review request |
-| `mutedRepos` | — | Comma-separated `owner/repo` to hide |
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `refreshIntervalSec` | integer | 180 | Poll interval (seconds) |
+| `giteaUrl` | string | — | Gitea instance URL |
+| `maxStaleHours` | integer | 6 | Hours before stale data is hidden |
+| `notifyOnFailure` | boolean | true | Notify on CI failure |
+| `notifyOnReviewRequest` | boolean | true | Notify on review request |
+| `mutedRepos` | string | — | Comma-separated `owner/repo` to exclude |
 
 ## Bar Widget
 
-The bar shows compact status using color-coded indicators:
+Color-coded compact indicators:
 
-- **Red** `✘ N` — N PRs with failed CI
-- **Blue** `● N` — N PRs awaiting your review
-- **Amber** `◦ N` — N jobs running (pulses)
-- **Green** `✔ N` — N PRs ready to merge
+| Indicator | Meaning |
+|-----------|---------|
+| Red `✘ N` | N PRs with failed CI |
+| Blue `● N` | N PRs awaiting your review |
+| Amber `◦ N` (pulsing) | N jobs running |
+| Green `✔ N` | N PRs ready to merge |
 
-When everything is healthy, the icon is subdued. An `!` appears on error.
+When everything is healthy, the icon is subdued. `!` appears on error.
 
 ## Panel Sections
 
@@ -103,100 +111,101 @@ When everything is healthy, the icon is subdued. An `!` appears on error.
 | Review | PRs where you are a requested reviewer |
 | All | Every open PR |
 
-Each PR row shows: status dot, title, repo, branch, author, review counts,
-CI check counts, blocker reason, and relative timestamp.
-
 ## Keyboard
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Navigate up/down |
-| `h` / `l` | Previous/next section |
-| `g` / `G` | First/last item |
+| `j`/`k` | Navigate up/down |
+| `h`/`l` | Previous/next section |
+| `g`/`G` | First/last item |
 | `Enter` | Open selected item |
 | `r` | Refresh now |
 | `Esc` | Close panel |
 
-Mouse: left-click toggles panel, right-click refreshes.
+Mouse: left-click toggles, right-click refreshes.
 
-## Keybinding
+## PR status classification
 
-Bind the panel to a key via `~/.config/hypr/bindings.lua`:
-
-```lua
-bind("$mod", "G", "exec", "omarchy-shell gitea.workstatus toggle")
-```
-
-Available IPC commands: `toggle`, `open`, `close`, `refresh`.
-
-## How It Works
-
-`bin/gitea-collect` runs on a timer and writes JSON to
-`~/.local/state/omarchy/gitea-workstatus/overview.json`. The QML panel
-watches this file.
-
-The collector:
-1. Authenticates and fetches your repos
-2. For each repo with PRs enabled, fetches open PRs concurrently
-3. For each PR, fetches reviews and commit status
-4. Fetches action runs for CI/CD monitoring
-5. Pipes everything through `bin/gitea-collect.jq` to classify and prioritize
-
-API calls are parallelized per-repo (8 concurrent). A lock file prevents
-overlapping runs. Connection failures carry forward the last good data.
+| Status | Criteria |
+|--------|----------|
+| `ready` | Approved + CI passed + `mergeable == true` (not draft) |
+| `approved_ci_passed` | Approved + CI passed but mergeability unknown |
+| `approved` | Approved, CI not yet passed |
+| `ci_passed` | CI passed, no approvals yet |
+| `ci_running` | CI checks pending |
+| `ci_failed` | CI failed or errored |
+| `changes_requested` | Reviewer requested changes (latest review per reviewer) |
+| `review_requested` | You are a requested reviewer |
+| `draft` | Draft PR (never classified as ready) |
+| `conflicted` | Merge conflicts (`mergeable == false`) |
+| `open` | None of the above |
 
 ## Tests
 
-Run the full test suite — no network or Gitea credentials needed:
+Run the full test suite — no network, no Gitea, no Quickshell needed:
 
 ```bash
 bash tests/run-all.sh
 ```
 
-| Suite | What it tests |
-|-------|---------------|
-| `test-jq-transform.sh` | PR classification, blocker detection, review/CI summaries, section bucketing |
-| `test-model.sh` | JS model: parsing, filtering, muting, notifications, time formatting |
-| `test-collector-validation.sh` | Script syntax, error handling for missing credentials |
+### Test suites
 
-## What Is Not Yet Tested
+| Suite | Tests | What it covers |
+|-------|-------|----------------|
+| `test-jq-transform.sh` | 45 | PR classification, draft/conflict/mergeability guards, latest-review-per-reviewer, blocker detection, CI summaries, Actions fixture fields, section bucketing |
+| `test-model.sh` | 32 | Parsing, filtering, muted-repo exclusion from counts + notifications, identity-based notification transitions (same-state no-repeat, new-PR-fires-even-if-count-same), statusIcon coverage |
+| `test-collector-validation.sh` | 13 | Bash syntax, jq syntax, missing-credentials error path, empty-URL error path, ownership-safe lock reclaim, **full mocked collector execution** with canned HTTP responses asserting valid structured output |
 
-- **QML rendering**: the bar widget and panel require the Omarchy/Quickshell
-  runtime which is not available in this build environment. To validate locally:
-  ```bash
-  qmllint -I "$OMARCHY_PATH/shell" BarWidget.qml Panel.qml components/*.qml
-  omarchy plugin validate ~/.config/omarchy/plugins/gitea.workstatus
-  ```
-- **Live API integration**: the collector is tested for syntax and error paths
-  but not against a real Gitea instance. Point it at your Gitea and confirm
-  `~/.local/state/omarchy/gitea-workstatus/overview.json` populates correctly.
-- **Notification delivery**: depends on the Omarchy `Notifications` API at
-  runtime.
+### What is not tested here
+
+| Category | Why | How to validate locally |
+|----------|-----|------------------------|
+| QML rendering | Requires Omarchy/Quickshell runtime | `qmllint -I "$OMARCHY_PATH/shell" BarWidget.qml Panel.qml components/*.qml` |
+| Manifest validity | Requires `omarchy plugin validate` | `omarchy plugin validate ~/.config/omarchy/plugins/gitea.workstatus` |
+| Live Gitea API | Requires real credentials + server | Install, configure credentials, check `overview.json` populates |
+| Desktop notifications | Requires Quickshell NotificationServer | Observe notifications on first CI failure |
+| Theme token binding | Requires live Omarchy theme | Visual inspection in the running shell |
+
+### QML API notes
+
+The QML files use:
+- `BarWidget` as the root type (Omarchy bar-widget entry point)
+- `PopupCard` for the panel
+- `setting("key")` to read manifest settings
+- `FileView` with `watchChanges: true`, `onLoaded`, `onFileChanged`, `text()`
+- `Process` to invoke the collector via `bash`
+- `Quickshell.Colors.*` for theme colors
+- `Quickshell.Sizes.*` for dimensions
+- `Quickshell.Services.Notifications` for desktop notifications
+
+These match the Quickshell/Omarchy runtime contract documented for Quattro.
+The exact namespace paths (`Quickshell.Colors` vs `Quickshell.Theming`) may
+need adjustment for your specific Omarchy build — run `qmllint` to verify.
 
 ## Architecture
 
 ```
 gitea-workstatus/
-├── manifest.json           Plugin manifest (bar-widget kind)
-├── BarWidget.qml           Compact bar: icon + counts
-├── Panel.qml               Drop-down panel with sections
-├── Model.js                State management, filtering, notifications
+├── manifest.json              Plugin manifest (bar-widget kind)
+├── BarWidget.qml              Bar widget: icon + counts, file watcher, collector
+├── Panel.qml                  Drop-down panel with reactive sections
+├── Model.js                   State, filtering, identity-based notifications
 ├── components/
-│   ├── PrRow.qml           PR row with status, reviews, CI, blockers
-│   ├── JobRow.qml           CI job row
-│   ├── SummaryBadge.qml    Section tab badges
-│   ├── RepoFilter.qml     Repo filter chips
-│   ├── EmptyState.qml      Empty state per section
-│   └── ErrorState.qml      Error + setup guidance
+│   ├── PrRow.qml              PR row: status, reviews, CI, blockers, labels
+│   ├── JobRow.qml             CI job row with status animation
+│   ├── SummaryBadge.qml       Section tab badges (reactive)
+│   ├── RepoFilter.qml         Repo filter chips
+│   ├── EmptyState.qml         Per-section empty state
+│   └── ErrorState.qml         Error + setup guidance
 ├── bin/
-│   ├── gitea-collect        Bash data collector
-│   └── gitea-collect.jq     JQ transform pipeline
+│   ├── gitea-collect           Bash collector (launched via bash, no exec bit needed)
+│   └── gitea-collect.jq        JQ transform: latest-review, mergeability, draft guards
 └── tests/
-    ├── run-all.sh           Test runner
-    ├── test-jq-transform.sh
-    ├── test-model.sh
-    ├── test-collector-validation.sh
-    └── mock-responses/      API response fixtures
+    ├── run-all.sh              Suite runner
+    ├── test-jq-transform.sh    45 tests: classification, regressions
+    ├── test-model.sh           32 tests: notifications, muting, filtering
+    ├── test-collector-validation.sh  13 tests: syntax, errors, mocked execution
+    └── mock-responses/         Gitea API fixtures (1.20+ format)
 ```
 
 ## License

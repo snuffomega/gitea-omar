@@ -2,6 +2,7 @@
 # Gitea work-status collector — fetches PRs, reviews, and CI status
 # Writes JSON to ~/.local/state/omarchy/gitea-workstatus/overview.json
 # Reads token from ~/.config/gitea-workstatus/credentials
+# Supports Gitea >= 1.19 (Actions API requires >= 1.20)
 set -euo pipefail
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/gitea-workstatus"
@@ -16,23 +17,55 @@ MAX_STALE_HOURS="${GITEA_WS_MAX_STALE_HOURS:-6}"
 
 mkdir -p "$STATE_DIR" "$CONFIG_DIR"
 
-cleanup() { rm -f "$LOCK_FILE"; }
-trap cleanup EXIT
+# --- Atomic write: write to temp file then mv ---
+atomic_write() {
+  local dest="$1" content="$2"
+  local tmpfile
+  tmpfile=$(mktemp "${dest}.XXXXXX")
+  printf '%s\n' "$content" > "$tmpfile"
+  mv -f "$tmpfile" "$dest"
+}
 
-if [ -f "$LOCK_FILE" ]; then
-  lock_age=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
-  if [ "$lock_age" -lt 300 ]; then
-    exit 0
+# --- Ownership-safe lock ---
+MY_PID=$$
+acquire_lock() {
+  if [ -f "$LOCK_FILE" ]; then
+    local lock_pid lock_age
+    lock_pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
+    lock_age=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
+    if [ "$lock_age" -lt 300 ] && [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+      exit 0
+    fi
+    # Stale lock from dead process — safe to reclaim
   fi
-fi
-touch "$LOCK_FILE"
+  echo "$MY_PID" > "$LOCK_FILE"
+}
 
-die() { echo "{\"error\": \"$1\", \"ts\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$OUTPUT"; exit 1; }
+release_lock() {
+  # Only remove if we own it
+  if [ -f "$LOCK_FILE" ]; then
+    local lock_pid
+    lock_pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
+    if [ "$lock_pid" = "$MY_PID" ]; then
+      rm -f "$LOCK_FILE"
+    fi
+  fi
+}
+trap release_lock EXIT
+
+acquire_lock
+
+# --- Error output ---
+die() {
+  atomic_write "$OUTPUT" "{\"error\": \"$1\", \"ts\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+  exit 1
+}
 
 if [ ! -f "$CRED_FILE" ]; then
   die "No credentials file. Create $CRED_FILE with GITEA_URL and GITEA_TOKEN."
 fi
 
+# shellcheck source=/dev/null
 source "$CRED_FILE"
 
 GITEA_URL="${GITEA_URL:-}"
@@ -43,34 +76,48 @@ GITEA_TOKEN="${GITEA_TOKEN:-}"
 
 GITEA_URL="${GITEA_URL%/}"
 
+# --- API helpers ---
+# api ENDPOINT [PAGE] [LIMIT] [EXTRA_PARAMS]
+# EXTRA_PARAMS is appended as-is (e.g. "state=open&type=pulls")
 api() {
   local endpoint="$1"
   local page="${2:-1}"
   local limit="${3:-50}"
+  local extra="${4:-}"
+  local url="${GITEA_URL}/api/v1${endpoint}?page=${page}&limit=${limit}"
+  if [ -n "$extra" ]; then
+    url="${url}&${extra}"
+  fi
   local response
   response=$(curl -sfS --max-time 15 \
     -H "Authorization: token $GITEA_TOKEN" \
     -H "Accept: application/json" \
-    "${GITEA_URL}/api/v1${endpoint}?page=${page}&limit=${limit}&token=" 2>&1) || {
+    "$url" 2>&1) || {
     echo '{"_error": "request_failed", "_endpoint": "'"$endpoint"'"}'
     return 1
   }
   echo "$response"
 }
 
+# api_paginated ENDPOINT LIMIT MAX_PAGES [EXTRA_PARAMS]
 api_paginated() {
   local endpoint="$1"
   local limit="${2:-50}"
   local max_pages="${3:-5}"
+  local extra="${4:-}"
   local all="[]"
   local page=1
 
   while [ "$page" -le "$max_pages" ]; do
+    local url="${GITEA_URL}/api/v1${endpoint}?page=${page}&limit=${limit}"
+    if [ -n "$extra" ]; then
+      url="${url}&${extra}"
+    fi
     local response
     response=$(curl -sS --max-time 15 -w '\n%{http_code}' \
       -H "Authorization: token $GITEA_TOKEN" \
       -H "Accept: application/json" \
-      "${GITEA_URL}/api/v1${endpoint}?page=${page}&limit=${limit}" 2>/dev/null) || break
+      "$url" 2>/dev/null) || break
 
     local http_code body
     http_code=$(echo "$response" | tail -1)
@@ -100,7 +147,7 @@ fetch_repos() {
 
 fetch_prs_for_repo() {
   local owner="$1" repo="$2"
-  api_paginated "/repos/${owner}/${repo}/pulls?state=open" 30 3
+  api_paginated "/repos/${owner}/${repo}/pulls" 30 3 "state=open"
 }
 
 fetch_reviews_for_pr() {
@@ -133,7 +180,6 @@ failed_repos="[]"
 
 collect_repo() {
   local owner="$1" repo="$2" full_name="${owner}/${repo}"
-  local has_actions
 
   prs=$(fetch_prs_for_repo "$owner" "$repo" 2>/dev/null) || prs="[]"
 
@@ -168,8 +214,10 @@ collect_repo() {
 }
 
 tmpdir=$(mktemp -d)
+trap 'release_lock; rm -rf "$tmpdir"' EXIT
 
 idx=0
+repo_attempted=0
 for row in $(echo "$repos_json" | jq -r '.[] | @base64'); do
   decoded=$(echo "$row" | base64 -d)
   owner=$(echo "$decoded" | jq -r '.owner.login')
@@ -178,9 +226,17 @@ for row in $(echo "$repos_json" | jq -r '.[] | @base64'); do
 
   [ "$has_prs" = "false" ] && continue
 
+  repo_attempted=$((repo_attempted + 1))
+
   (
     result=$(collect_repo "$owner" "$repo" 2>/dev/null) || result="[]"
     echo "$result" > "$tmpdir/prs_${idx}.json"
+    # Track success/failure
+    if echo "$result" | jq -e 'length > 0 or type == "array"' >/dev/null 2>&1; then
+      echo "ok" > "$tmpdir/status_${idx}"
+    else
+      echo "empty" > "$tmpdir/status_${idx}"
+    fi
 
     runs=$(fetch_action_runs "$owner" "$repo" 2>/dev/null) || runs="{}"
     if echo "$runs" | jq -e '.workflow_runs' >/dev/null 2>&1; then
@@ -193,7 +249,6 @@ for row in $(echo "$repos_json" | jq -r '.[] | @base64'); do
 
   idx=$((idx + 1))
 
-  # Limit concurrent subshells
   if [ $((idx % 8)) -eq 0 ]; then
     wait
   fi
@@ -214,15 +269,37 @@ for f in "$tmpdir"/runs_*.json; do
   all_runs=$(echo "$all_runs" "$content" | jq -s '.[0] + .[1]')
 done
 
-rm -rf "$tmpdir"
+# Count failures
+repo_failed=0
+for f in "$tmpdir"/status_*; do
+  [ -f "$f" ] || continue
+  if [ "$(cat "$f")" != "ok" ]; then
+    repo_failed=$((repo_failed + 1))
+  fi
+done
 
-# Carry forward stale data if this run had connection issues
-prev_output=""
-if [ -f "$OUTPUT" ]; then
-  prev_output=$(cat "$OUTPUT")
+# --- Stale data carry-forward ---
+# If this run collected nothing and we had previous data, carry it forward marked stale
+is_stale=false
+if [ "$(echo "$all_prs" | jq 'length')" -eq 0 ] && \
+   [ "$(echo "$all_runs" | jq 'length')" -eq 0 ] && \
+   [ "$repo_attempted" -gt 0 ] && \
+   [ -f "$OUTPUT" ]; then
+  prev_ts=$(jq -r '.meta.collected_at // empty' "$OUTPUT" 2>/dev/null || echo "")
+  if [ -n "$prev_ts" ]; then
+    prev_epoch=$(date -d "$prev_ts" +%s 2>/dev/null || echo 0)
+    now_epoch=$(date +%s)
+    hours_old=$(( (now_epoch - prev_epoch) / 3600 ))
+    if [ "$hours_old" -lt "$MAX_STALE_HOURS" ]; then
+      # Carry forward existing data, mark stale
+      jq --arg ts "$now_ts" '.meta.stale = true | .meta.stale_since = $ts' "$OUTPUT" > "$OUTPUT.tmp.$$"
+      mv -f "$OUTPUT.tmp.$$" "$OUTPUT"
+      echo "Stale carry-forward at $now_ts (data ${hours_old}h old)"
+      exit 0
+    fi
+  fi
 fi
 
-# Build the overview through jq
 overview=$(jq -n \
   --arg url "$GITEA_URL" \
   --arg user "$username" \
@@ -231,7 +308,9 @@ overview=$(jq -n \
   --argjson runs "$all_runs" \
   --argjson repo_count "$repo_count" \
   --argjson max_stale "$MAX_STALE_HOURS" \
+  --argjson repo_failed "$repo_failed" \
+  --argjson repo_attempted "$repo_attempted" \
   -f "$JQ_SCRIPT")
 
-echo "$overview" > "$OUTPUT"
-echo "Collected: $(echo "$all_prs" | jq 'length') PRs, $(echo "$all_runs" | jq 'length') runs at $now_ts"
+atomic_write "$OUTPUT" "$overview"
+echo "Collected: $(echo "$all_prs" | jq 'length') PRs, $(echo "$all_runs" | jq 'length') runs ($repo_failed/$repo_attempted repos failed) at $now_ts"

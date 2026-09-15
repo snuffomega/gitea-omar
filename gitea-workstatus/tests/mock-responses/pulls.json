@@ -52,5 +52,35 @@
     "mergeable": true,
     "labels": [],
     "requested_reviewers": []
+  },
+  {
+    "number": 44,
+    "title": "Update docs for API v2",
+    "state": "open",
+    "draft": false,
+    "user": { "login": "testuser", "avatar_url": "https://git.example.com/avatars/1" },
+    "head": { "ref": "docs/v2", "sha": "mmm111nnn222" },
+    "base": { "ref": "main" },
+    "created_at": "2026-09-15T07:00:00Z",
+    "updated_at": "2026-09-15T09:00:00Z",
+    "html_url": "https://git.example.com/testuser/webapp/pulls/44",
+    "mergeable": false,
+    "labels": [],
+    "requested_reviewers": []
+  },
+  {
+    "number": 45,
+    "title": "Add caching layer",
+    "state": "open",
+    "draft": false,
+    "user": { "login": "testuser", "avatar_url": "https://git.example.com/avatars/1" },
+    "head": { "ref": "feat/cache", "sha": "ooo333ppp444" },
+    "base": { "ref": "main" },
+    "created_at": "2026-09-15T08:00:00Z",
+    "updated_at": "2026-09-15T09:30:00Z",
+    "html_url": "https://git.example.com/testuser/webapp/pulls/45",
+    "mergeable": null,
+    "labels": [],
+    "requested_reviewers": []
   }
 ]

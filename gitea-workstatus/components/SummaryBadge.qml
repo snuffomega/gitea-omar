@@ -1,24 +1,23 @@
 import QtQuick
 import QtQuick.Layouts
-import Omarchy.Themes
-import Omarchy.Widgets
+import Quickshell
 
 Item {
     id: badge
 
     property string label: ""
     property int count: 0
-    property color accent: Palette.text.muted
+    property color accent: Quickshell.Colors.textMuted
     property bool active: false
 
     signal clicked()
 
-    implicitWidth: badgeRow.implicitWidth + Style.space(12)
-    implicitHeight: Style.space(24)
+    implicitWidth: badgeRow.implicitWidth + 12
+    implicitHeight: 24
 
     Rectangle {
         anchors.fill: parent
-        radius: Style.cornerRadius * 0.4
+        radius: 3
         color: {
             if (active) return Qt.rgba(accent.r, accent.g, accent.b, 0.15);
             if (mouseArea.containsMouse) return Qt.rgba(accent.r, accent.g, accent.b, 0.08);
@@ -41,21 +40,19 @@ Item {
     RowLayout {
         id: badgeRow
         anchors.centerIn: parent
-        spacing: Style.space(4)
+        spacing: 4
 
         Text {
             text: badge.count.toString()
-            font.family: Style.font.family
-            font.pixelSize: Style.space(11)
+            font.pixelSize: 11
             font.weight: badge.active ? Font.DemiBold : Font.Normal
-            color: badge.count > 0 ? badge.accent : Palette.text.muted
+            color: badge.count > 0 ? badge.accent : Quickshell.Colors.textMuted
         }
 
         Text {
             text: badge.label
-            font.family: Style.font.family
-            font.pixelSize: Style.space(10)
-            color: badge.active ? Palette.text.primary : Palette.text.muted
+            font.pixelSize: 10
+            color: badge.active ? Quickshell.Colors.textPrimary : Quickshell.Colors.textMuted
         }
     }
 }

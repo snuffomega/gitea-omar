@@ -2,50 +2,53 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
-import Omarchy.Themes
-import Omarchy.Widgets
+import Quickshell.Services.Notifications as Notif
 
 import "Model.js" as Model
 
-BarWidgetItem {
+// BarWidget is the standard Omarchy bar-widget root type.
+// Settings are read via setting("key") which returns the manifest default
+// or the user-configured value.
+BarWidget {
     id: root
 
     property string moduleName: "gitea.workstatus"
-    property int refreshIntervalSec: config.refreshIntervalSec ?? 180
-    property string giteaUrl: config.giteaUrl ?? ""
-    property int maxStaleHours: config.maxStaleHours ?? 6
-    property bool notifyOnFailure: config.notifyOnFailure ?? true
-    property bool notifyOnReviewRequest: config.notifyOnReviewRequest ?? true
-    property string mutedRepos: config.mutedRepos ?? ""
+    property int refreshIntervalSec: setting("refreshIntervalSec")
+    property string giteaUrl: setting("giteaUrl")
+    property int maxStaleHours: setting("maxStaleHours")
+    property bool notifyOnFailure: setting("notifyOnFailure")
+    property bool notifyOnReviewRequest: setting("notifyOnReviewRequest")
+    property string mutedRepos: setting("mutedRepos")
 
-    property string stateFile: StandardPaths.state + "/omarchy/gitea-workstatus/overview.json"
-    property var barSummary: ({ total: 0, attention: 0, running: 0, failed: 0, review: 0, healthy: true })
-    property var prevSummary: ({})
+    property string stateDir: StandardPaths.writableLocation(StandardPaths.StateLocation) + "/omarchy/gitea-workstatus"
+    property string stateFile: stateDir + "/overview.json"
+
+    property var barSummary: ({ total: 0, attention: 0, running: 0, failed: 0, review: 0, ready: 0, healthy: true })
     property bool panelOpen: false
     property bool stale: false
     property bool hasError: false
     property string errorMsg: ""
+    property int dataRevision: 0
 
-    implicitWidth: barRow.implicitWidth + Style.space(16)
-    implicitHeight: Style.bar.sizeHorizontal
+    implicitWidth: barRow.implicitWidth + Quickshell.Sizes.spacing * 4
+    implicitHeight: Quickshell.Sizes.barHeight
 
     function open() { panelOpen = true; panelLoader.active = true; }
-    function close() { panelOpen = false; }
+    function close() { panelOpen = false; panelLoader.active = false; }
     function toggle() { panelOpen ? close() : open(); }
     function refresh() { collector.running = true; }
     function next() {}
 
     Component.onCompleted: {
         Model.setMutedRepos(mutedRepos);
-        loadData();
+        fileReader.reload();
         collector.running = true;
     }
 
-    onMutedReposChanged: Model.setMutedRepos(mutedRepos)
-
-    function loadData() {
-        fileReader.path = stateFile;
-        fileReader.reload();
+    onMutedReposChanged: {
+        Model.setMutedRepos(mutedRepos);
+        barSummary = Model.getBarSummary();
+        dataRevision = Model.revision();
     }
 
     function processData(content) {
@@ -68,42 +71,49 @@ BarWidgetItem {
             return;
         }
 
-        prevSummary = barSummary;
         Model.parseOverview(content);
         barSummary = Model.getBarSummary();
+        dataRevision = Model.revision();
         hasError = false;
         errorMsg = "";
 
         var meta = Model.getMeta();
         stale = meta && meta.stale === true;
 
-        if (notifyOnFailure || notifyOnReviewRequest) {
-            var notes = Model.getNewNotifications(prevSummary);
-            for (var i = 0; i < notes.length; i++) {
-                if (notes[i].type === "failure" && notifyOnFailure) {
-                    Notifications.send("Gitea: " + notes[i].message);
-                } else if (notes[i].type === "review" && notifyOnReviewRequest) {
-                    Notifications.send("Gitea: " + notes[i].message);
-                }
-            }
+        // Identity-based notifications
+        var notes = Model.getNewNotifications(notifyOnFailure, notifyOnReviewRequest);
+        for (var i = 0; i < notes.length; i++) {
+            notifier.send("Gitea", notes[i].message);
         }
     }
 
+    // Desktop notification sender
+    Notif.NotificationServer {
+        id: notifier
+        function send(title, body) {
+            var n = createNotification();
+            n.summary = title;
+            n.body = body;
+            n.send();
+        }
+    }
+
+    // File watcher for overview.json
     FileView {
         id: fileReader
         path: root.stateFile
-        onTextChanged: root.processData(text)
+        watchChanges: true
+        onLoaded: root.processData(text())
+        onFileChanged: root.processData(text())
     }
 
+    // Collector process — launch via bash to avoid executable-bit issues
     Process {
         id: collector
-        command: [Qt.resolvedUrl("bin/gitea-collect").toString().replace("file://", "")]
+        command: ["bash", Qt.resolvedUrl("bin/gitea-collect").toString().replace("file://", "")]
         environment: ({
             GITEA_WS_MAX_STALE_HOURS: root.maxStaleHours.toString()
         })
-        onExited: {
-            root.loadData();
-        }
     }
 
     Timer {
@@ -111,12 +121,6 @@ BarWidgetItem {
         running: true
         repeat: true
         onTriggered: collector.running = true
-    }
-
-    // Watch for file changes
-    FileSystemWatcher {
-        files: [root.stateFile]
-        onFileChanged: root.loadData()
     }
 
     // === Bar Widget Content ===
@@ -132,83 +136,75 @@ BarWidgetItem {
         RowLayout {
             id: barRow
             anchors.centerIn: parent
-            spacing: Style.space(6)
+            spacing: 6
 
-            // Gitea icon (git-pull-request style)
             Text {
                 text: "\u2387"
-                font.family: Style.font.family
-                font.pixelSize: Style.space(14)
+                font.pixelSize: 14
                 color: {
-                    if (hasError) return Palette.text.muted;
-                    if (barSummary.attention > 0 || barSummary.failed > 0) return Palette.status.error;
-                    if (barSummary.running > 0) return Palette.status.warning;
-                    if (barSummary.review > 0) return Palette.accent.primary;
-                    return Palette.text.secondary;
+                    if (root.hasError) return Quickshell.Colors.textMuted;
+                    if (root.barSummary.attention > 0 || root.barSummary.failed > 0) return Quickshell.Colors.error;
+                    if (root.barSummary.running > 0) return Quickshell.Colors.warning;
+                    if (root.barSummary.review > 0) return Quickshell.Colors.accent;
+                    return Quickshell.Colors.textSecondary;
                 }
-                opacity: stale ? 0.5 : 1.0
+                opacity: root.stale ? 0.5 : 1.0
 
                 SequentialAnimation on opacity {
-                    running: barSummary.running > 0
+                    running: root.barSummary.running > 0 && !root.stale
                     loops: Animation.Infinite
                     NumberAnimation { to: 0.4; duration: 800; easing.type: Easing.InOutSine }
                     NumberAnimation { to: 1.0; duration: 800; easing.type: Easing.InOutSine }
                 }
             }
 
-            // Compact counts — only show non-zero
             Row {
-                spacing: Style.space(4)
-                visible: !hasError && barSummary.total > 0
+                spacing: 4
+                visible: !root.hasError && root.barSummary.total > 0
 
-                // Failed CI
                 Row {
-                    spacing: Style.space(2)
-                    visible: barSummary.failed > 0
+                    spacing: 2
+                    visible: root.barSummary.failed > 0
                     Text {
                         text: "\u2718"
-                        font.pixelSize: Style.space(10)
-                        color: Palette.status.error
+                        font.pixelSize: 10
+                        color: Quickshell.Colors.error
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Text {
-                        text: barSummary.failed
-                        font.family: Style.font.family
-                        font.pixelSize: Style.space(11)
+                        text: root.barSummary.failed
+                        font.pixelSize: 11
                         font.weight: Font.DemiBold
-                        color: Palette.status.error
+                        color: Quickshell.Colors.error
                         anchors.verticalCenter: parent.verticalCenter
                     }
                 }
 
-                // Review requested
                 Row {
-                    spacing: Style.space(2)
-                    visible: barSummary.review > 0
+                    spacing: 2
+                    visible: root.barSummary.review > 0
                     Text {
                         text: "\u25CF"
-                        font.pixelSize: Style.space(8)
-                        color: Palette.accent.primary
+                        font.pixelSize: 8
+                        color: Quickshell.Colors.accent
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Text {
-                        text: barSummary.review
-                        font.family: Style.font.family
-                        font.pixelSize: Style.space(11)
+                        text: root.barSummary.review
+                        font.pixelSize: 11
                         font.weight: Font.DemiBold
-                        color: Palette.accent.primary
+                        color: Quickshell.Colors.accent
                         anchors.verticalCenter: parent.verticalCenter
                     }
                 }
 
-                // Running jobs
                 Row {
-                    spacing: Style.space(2)
-                    visible: barSummary.running > 0
+                    spacing: 2
+                    visible: root.barSummary.running > 0
                     Text {
                         text: "\u25E6"
-                        font.pixelSize: Style.space(10)
-                        color: Palette.status.warning
+                        font.pixelSize: 10
+                        color: Quickshell.Colors.warning
                         anchors.verticalCenter: parent.verticalCenter
 
                         SequentialAnimation on opacity {
@@ -219,42 +215,37 @@ BarWidgetItem {
                         }
                     }
                     Text {
-                        text: barSummary.running
-                        font.family: Style.font.family
-                        font.pixelSize: Style.space(11)
-                        color: Palette.status.warning
+                        text: root.barSummary.running
+                        font.pixelSize: 11
+                        color: Quickshell.Colors.warning
                         anchors.verticalCenter: parent.verticalCenter
                     }
                 }
 
-                // Ready to merge (quiet indicator)
                 Row {
-                    spacing: Style.space(2)
-                    visible: barSummary.ready > 0 && barSummary.attention === 0
+                    spacing: 2
+                    visible: root.barSummary.ready > 0 && root.barSummary.attention === 0
                     Text {
                         text: "\u2714"
-                        font.pixelSize: Style.space(10)
-                        color: Palette.status.success
+                        font.pixelSize: 10
+                        color: Quickshell.Colors.success
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Text {
-                        text: barSummary.ready
-                        font.family: Style.font.family
-                        font.pixelSize: Style.space(11)
-                        color: Palette.status.success
+                        text: root.barSummary.ready
+                        font.pixelSize: 11
+                        color: Quickshell.Colors.success
                         anchors.verticalCenter: parent.verticalCenter
                     }
                 }
             }
 
-            // Error/empty state
             Text {
-                visible: hasError
+                visible: root.hasError
                 text: "!"
-                font.family: Style.font.family
-                font.pixelSize: Style.space(11)
+                font.pixelSize: 11
                 font.weight: Font.Bold
-                color: Palette.text.muted
+                color: Quickshell.Colors.textMuted
             }
         }
     }
@@ -263,10 +254,9 @@ BarWidgetItem {
     Loader {
         id: panelLoader
         active: root.panelOpen
-        sourceComponent: Panel {}
+        source: "Panel.qml"
         onLoaded: {
             item.barWidget = root;
-            item.visible = true;
         }
     }
 }

@@ -1,18 +1,31 @@
 # gitea-collect.jq — Transform raw API data into the overview structure
-# Input: --arg url, --arg user, --arg ts, --argjson prs, --argjson runs, --argjson repo_count, --argjson max_stale
+# Supports Gitea >= 1.19. Actions runs require >= 1.20.
+# Input: --arg url, --arg user, --arg ts,
+#        --argjson prs, --argjson runs, --argjson repo_count,
+#        --argjson max_stale, --argjson repo_failed, --argjson repo_attempted
+
+# Latest effective review per reviewer: last non-COMMENT, non-DISMISSED review wins.
+# This prevents a stale REQUEST_CHANGES from blocking after the reviewer approves.
+def latest_reviews_per_reviewer:
+  if type == "array" then
+    [ .[] | select(.state != null and .state != "" and .state != "COMMENT" and .state != "DISMISSED") ]
+    | sort_by(.submitted_at // .id // 0)
+    | reduce .[] as $r ({}; .[$r.user.login] = $r)
+    | [.[]]
+  else [] end;
 
 def review_summary:
   if type == "array" then
+    latest_reviews_per_reviewer as $effective |
     {
-      approved: [.[] | select(.state == "APPROVED")] | length,
-      changes_requested: [.[] | select(.state == "REQUEST_CHANGES" or .state == "CHANGES_REQUESTED")] | length,
-      commented: [.[] | select(.state == "COMMENT")] | length,
-      pending: [.[] | select(.state == "PENDING")] | length,
-      dismissed: [.[] | select(.state == "DISMISSED")] | length,
-      reviewers: [.[] | .user.login] | unique
+      approved: [$effective[] | select(.state == "APPROVED")] | length,
+      changes_requested: [$effective[] | select(.state == "REQUEST_CHANGES" or .state == "CHANGES_REQUESTED")] | length,
+      pending: [$effective[] | select(.state == "PENDING")] | length,
+      reviewers: [$effective[] | .user.login] | unique,
+      all_reviewers: [.[] | .user.login] | unique
     }
   else
-    { approved: 0, changes_requested: 0, commented: 0, pending: 0, dismissed: 0, reviewers: [] }
+    { approved: 0, changes_requested: 0, pending: 0, reviewers: [], all_reviewers: [] }
   end;
 
 def ci_summary:
@@ -35,6 +48,20 @@ def ci_summary:
     { state: "unknown", total: 0, checks: [], passed: 0, failed: 0, pending_count: 0 }
   end;
 
+# Mergeability: Gitea returns null when not yet computed, true/false when known.
+# null is treated as "unknown" — never assume mergeable.
+def is_mergeable:
+  .mergeable == true;
+
+def is_conflicted:
+  .mergeable == false;
+
+def mergeable_unknown:
+  .mergeable == null or (.mergeable | type) != "boolean";
+
+def is_draft:
+  .draft == true;
+
 def pr_attention($user):
   .reviews.changes_requested > 0
   or (.ci.state == "failure" or .ci.state == "error")
@@ -45,7 +72,10 @@ def pr_status_label($user):
   elif .reviews.changes_requested > 0 then "changes_requested"
   elif (.requested_reviewers // [] | index($user) != null) then "review_requested"
   elif .ci.state == "pending" and .ci.total > 0 then "ci_running"
-  elif .reviews.approved > 0 and .ci.state == "success" then "ready"
+  elif is_draft then "draft"
+  elif is_conflicted then "conflicted"
+  elif .reviews.approved > 0 and .ci.state == "success" and is_mergeable then "ready"
+  elif .reviews.approved > 0 and .ci.state == "success" then "approved_ci_passed"
   elif .reviews.approved > 0 then "approved"
   elif .ci.state == "success" then "ci_passed"
   else "open"
@@ -53,6 +83,7 @@ def pr_status_label($user):
 
 def blocker_reason($user):
   [
+    (if is_draft then "Draft PR" else empty end),
     (if .ci.failed > 0 then
       (.ci.checks | map(select(.state == "failure" or .state == "error")) | map(.context) | join(", "))
       | if . != "" then "CI failed: " + . else empty end
@@ -60,18 +91,23 @@ def blocker_reason($user):
     (if .reviews.changes_requested > 0 then
       "Changes requested by reviewer"
     else empty end),
-    (if (.mergeable // true) == false then
+    (if is_conflicted then
       "Merge conflicts"
+    else empty end),
+    (if mergeable_unknown and (is_draft | not) then
+      "Mergeability unknown"
     else empty end),
     (if .reviews.approved == 0 and (.requested_reviewers // [] | length) > 0 then
       "Awaiting review"
     else empty end)
   ] | if length > 0 then join("; ") else null end;
 
+# Gitea Actions (>= 1.20): status is "waiting", "running", "success", "failure", "cancelled", "skipped"
+# conclusion mirrors status for completed runs
 def run_status_bucket:
-  if .status == "running" or .status == "waiting" then "running"
+  if .status == "running" or .status == "waiting" or .status == "queued" then "running"
   elif .status == "success" then "completed"
-  elif .status == "failure" or .status == "cancelled" then "failed"
+  elif .status == "failure" or .status == "cancelled" or .status == "skipped" then "failed"
   else "other"
   end;
 
@@ -88,7 +124,7 @@ def run_status_bucket:
   updated: .updated_at,
   url: .html_url,
   mergeable: .mergeable,
-  draft: (.draft // false),
+  draft: (if .draft == true then true else false end),
   labels: [(.labels // [])[] | { name: .name, color: .color }],
   requested_reviewers: [(.requested_reviewers // [])[] | .login],
   reviews: (._reviews | review_summary),
@@ -105,17 +141,17 @@ def run_status_bucket:
   }
 )) as $classified_prs |
 
-# Transform runs
+# Transform runs — use fields from Gitea Actions API (>= 1.20)
 ($runs | map({
   id: .id,
   repo: ._repo,
-  workflow: .name,
+  workflow: (.name // .workflow_id // "unknown"),
   status: .status,
-  conclusion: .conclusion,
-  branch: .head_branch,
+  conclusion: (.conclusion // .status),
+  branch: (.head_branch // .head_sha),
   event: .event,
-  started: .created_at,
-  updated: .updated_at,
+  started: (.run_started_at // .created_at),
+  updated: (.updated_at // .created_at),
   url: .html_url,
   bucket: run_status_bucket
 })) as $processed_runs |
@@ -127,6 +163,8 @@ def run_status_bucket:
     username: $user,
     collected_at: $ts,
     repo_count: $repo_count,
+    repo_failed: $repo_failed,
+    repo_attempted: $repo_attempted,
     stale: false,
     max_stale_hours: $max_stale
   },

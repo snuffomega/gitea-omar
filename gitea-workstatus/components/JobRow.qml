@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
-import Omarchy.Themes
-import Omarchy.Widgets
+import Quickshell
 
 import "../Model.js" as Model
 
@@ -14,18 +13,18 @@ Item {
     signal openJob()
     signal openRepo()
 
-    implicitHeight: contentLayout.implicitHeight + Style.space(10)
+    implicitHeight: contentLayout.implicitHeight + 10
     width: parent ? parent.width : 0
 
     Rectangle {
         anchors.fill: parent
-        radius: Style.cornerRadius * 0.5
+        radius: 4
         color: {
-            if (selected) return Qt.rgba(Palette.accent.primary.r, Palette.accent.primary.g, Palette.accent.primary.b, 0.1);
-            if (mouseArea.containsMouse) return Qt.rgba(Palette.text.primary.r, Palette.text.primary.g, Palette.text.primary.b, 0.04);
+            if (selected) return Qt.rgba(Quickshell.Colors.accent.r, Quickshell.Colors.accent.g, Quickshell.Colors.accent.b, 0.1);
+            if (mouseArea.containsMouse) return Qt.rgba(Quickshell.Colors.textPrimary.r, Quickshell.Colors.textPrimary.g, Quickshell.Colors.textPrimary.b, 0.04);
             return "transparent";
         }
-        border.color: selected ? Qt.rgba(Palette.accent.primary.r, Palette.accent.primary.g, Palette.accent.primary.b, 0.3) : "transparent"
+        border.color: selected ? Qt.rgba(Quickshell.Colors.accent.r, Quickshell.Colors.accent.g, Quickshell.Colors.accent.b, 0.3) : "transparent"
         border.width: selected ? 1 : 0
 
         Behavior on color { ColorAnimation { duration: 120 } }
@@ -42,59 +41,55 @@ Item {
     ColumnLayout {
         id: contentLayout
         anchors.fill: parent
-        anchors.margins: Style.space(8)
-        spacing: Style.space(3)
+        anchors.margins: 8
+        spacing: 3
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: Style.space(6)
+            spacing: 6
 
-            // Status icon
             Rectangle {
-                width: Style.space(8)
-                height: Style.space(8)
-                radius: width / 2
+                width: 8; height: 8; radius: 4
                 color: {
                     switch (data.status) {
                         case "running":
-                        case "waiting": return Palette.status.warning;
-                        case "success": return Palette.status.success;
-                        case "failure": return Palette.status.error;
-                        case "cancelled": return Palette.text.muted;
-                        default: return Palette.text.muted;
+                        case "waiting":
+                        case "queued": return Quickshell.Colors.warning;
+                        case "success": return Quickshell.Colors.success;
+                        case "failure": return Quickshell.Colors.error;
+                        case "cancelled":
+                        case "skipped": return Quickshell.Colors.textMuted;
+                        default: return Quickshell.Colors.textMuted;
                     }
                 }
 
                 SequentialAnimation on opacity {
-                    running: data.status === "running" || data.status === "waiting"
+                    running: data.status === "running" || data.status === "waiting" || data.status === "queued"
                     loops: Animation.Infinite
                     NumberAnimation { to: 0.3; duration: 700; easing.type: Easing.InOutSine }
                     NumberAnimation { to: 1.0; duration: 700; easing.type: Easing.InOutSine }
                 }
             }
 
-            // Workflow name
             Text {
                 Layout.fillWidth: true
                 text: data.workflow || ""
-                font.family: Style.font.family
-                font.pixelSize: Style.space(12)
-                color: Palette.text.primary
+                font.pixelSize: 12
+                color: Quickshell.Colors.textPrimary
                 elide: Text.ElideRight
                 maximumLineCount: 1
             }
 
-            // Status text
             Text {
                 text: data.status || ""
-                font.family: Style.font.family
-                font.pixelSize: Style.space(10)
+                font.pixelSize: 10
                 color: {
                     switch (data.status) {
-                        case "running": return Palette.status.warning;
-                        case "success": return Palette.status.success;
-                        case "failure": return Palette.status.error;
-                        default: return Palette.text.muted;
+                        case "running":
+                        case "waiting": return Quickshell.Colors.warning;
+                        case "success": return Quickshell.Colors.success;
+                        case "failure": return Quickshell.Colors.error;
+                        default: return Quickshell.Colors.textMuted;
                     }
                 }
             }
@@ -102,14 +97,13 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: Style.space(6)
+            spacing: 6
 
-            // Repo
             Text {
                 text: data.repo || ""
-                font.family: Style.font.monospace
-                font.pixelSize: Style.space(10)
-                color: Palette.accent.secondary
+                font.family: "monospace"
+                font.pixelSize: 10
+                color: Quickshell.Colors.accentSecondary
                 opacity: repoMouse.containsMouse ? 1.0 : 0.7
 
                 MouseArea {
@@ -121,34 +115,29 @@ Item {
                 }
             }
 
-            // Branch
             Text {
                 text: data.branch || ""
-                font.family: Style.font.monospace
-                font.pixelSize: Style.space(10)
-                color: Palette.text.secondary
-                Layout.maximumWidth: Style.space(120)
+                font.family: "monospace"
+                font.pixelSize: 10
+                color: Quickshell.Colors.textSecondary
+                Layout.maximumWidth: 120
                 elide: Text.ElideRight
             }
 
-            // Event type
             Text {
                 visible: !!data.event
                 text: data.event || ""
-                font.family: Style.font.family
-                font.pixelSize: Style.space(9)
-                color: Palette.text.muted
+                font.pixelSize: 9
+                color: Quickshell.Colors.textMuted
                 opacity: 0.5
             }
 
             Item { Layout.fillWidth: true }
 
-            // Timestamp
             Text {
                 text: Model.timeAgo(data.updated || data.started)
-                font.family: Style.font.family
-                font.pixelSize: Style.space(10)
-                color: Palette.text.muted
+                font.pixelSize: 10
+                color: Quickshell.Colors.textMuted
                 opacity: 0.6
             }
         }

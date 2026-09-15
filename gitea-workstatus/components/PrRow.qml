@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
-import Omarchy.Themes
-import Omarchy.Widgets
+import Quickshell
 
 import "../Model.js" as Model
 
@@ -15,18 +14,18 @@ Item {
     signal openPr()
     signal openRepo()
 
-    implicitHeight: contentLayout.implicitHeight + Style.space(12)
+    implicitHeight: contentLayout.implicitHeight + 12
     width: parent ? parent.width : 0
 
     Rectangle {
         anchors.fill: parent
-        radius: Style.cornerRadius * 0.5
+        radius: 4
         color: {
-            if (selected) return Qt.rgba(Palette.accent.primary.r, Palette.accent.primary.g, Palette.accent.primary.b, 0.1);
-            if (mouseArea.containsMouse) return Qt.rgba(Palette.text.primary.r, Palette.text.primary.g, Palette.text.primary.b, 0.04);
+            if (selected) return Qt.rgba(Quickshell.Colors.accent.r, Quickshell.Colors.accent.g, Quickshell.Colors.accent.b, 0.1);
+            if (mouseArea.containsMouse) return Qt.rgba(Quickshell.Colors.textPrimary.r, Quickshell.Colors.textPrimary.g, Quickshell.Colors.textPrimary.b, 0.04);
             return "transparent";
         }
-        border.color: selected ? Qt.rgba(Palette.accent.primary.r, Palette.accent.primary.g, Palette.accent.primary.b, 0.3) : "transparent"
+        border.color: selected ? Qt.rgba(Quickshell.Colors.accent.r, Quickshell.Colors.accent.g, Quickshell.Colors.accent.b, 0.3) : "transparent"
         border.width: selected ? 1 : 0
 
         Behavior on color { ColorAnimation { duration: 120 } }
@@ -43,29 +42,28 @@ Item {
     ColumnLayout {
         id: contentLayout
         anchors.fill: parent
-        anchors.margins: Style.space(8)
-        spacing: Style.space(4)
+        anchors.margins: 8
+        spacing: 4
 
-        // Top line: status + title + repo
         RowLayout {
             Layout.fillWidth: true
-            spacing: Style.space(6)
+            spacing: 6
 
-            // Status indicator
             Rectangle {
-                width: Style.space(8)
-                height: Style.space(8)
-                radius: width / 2
+                width: 8; height: 8; radius: 4
                 color: {
                     switch (data.status_label) {
-                        case "ci_failed": return Palette.status.error;
-                        case "changes_requested": return Palette.status.error;
-                        case "review_requested": return Palette.accent.primary;
-                        case "ci_running": return Palette.status.warning;
-                        case "ready": return Palette.status.success;
-                        case "approved": return Palette.status.success;
-                        case "ci_passed": return Palette.status.info;
-                        default: return Palette.text.muted;
+                        case "ci_failed": return Quickshell.Colors.error;
+                        case "changes_requested": return Quickshell.Colors.error;
+                        case "review_requested": return Quickshell.Colors.accent;
+                        case "ci_running": return Quickshell.Colors.warning;
+                        case "ready": return Quickshell.Colors.success;
+                        case "approved":
+                        case "approved_ci_passed": return Quickshell.Colors.success;
+                        case "ci_passed": return Quickshell.Colors.info;
+                        case "draft": return Quickshell.Colors.textMuted;
+                        case "conflicted": return Quickshell.Colors.warning;
+                        default: return Quickshell.Colors.textMuted;
                     }
                 }
 
@@ -77,55 +75,63 @@ Item {
                 }
             }
 
-            // PR title
             Text {
                 Layout.fillWidth: true
                 text: data.title || ""
-                font.family: Style.font.family
-                font.pixelSize: Style.space(12)
+                font.pixelSize: 12
                 font.weight: data.needs_attention ? Font.DemiBold : Font.Normal
-                color: Palette.text.primary
+                color: Quickshell.Colors.textPrimary
                 elide: Text.ElideRight
                 maximumLineCount: 1
             }
 
-            // Draft badge
             Rectangle {
                 visible: data.draft === true
-                width: draftText.implicitWidth + Style.space(8)
-                height: draftText.implicitHeight + Style.space(4)
-                radius: Style.cornerRadius * 0.3
-                color: Qt.rgba(Palette.text.muted.r, Palette.text.muted.g, Palette.text.muted.b, 0.15)
+                width: draftText.implicitWidth + 8
+                height: draftText.implicitHeight + 4
+                radius: 2
+                color: Qt.rgba(Quickshell.Colors.textMuted.r, Quickshell.Colors.textMuted.g, Quickshell.Colors.textMuted.b, 0.15)
                 Text {
                     id: draftText
                     anchors.centerIn: parent
                     text: "draft"
-                    font.family: Style.font.family
-                    font.pixelSize: Style.space(9)
-                    color: Palette.text.muted
+                    font.pixelSize: 9
+                    color: Quickshell.Colors.textMuted
                 }
             }
 
-            // PR number
+            Rectangle {
+                visible: data.status_label === "conflicted"
+                width: conflictText.implicitWidth + 8
+                height: conflictText.implicitHeight + 4
+                radius: 2
+                color: Qt.rgba(Quickshell.Colors.warning.r, Quickshell.Colors.warning.g, Quickshell.Colors.warning.b, 0.15)
+                Text {
+                    id: conflictText
+                    anchors.centerIn: parent
+                    text: "conflicts"
+                    font.pixelSize: 9
+                    color: Quickshell.Colors.warning
+                }
+            }
+
             Text {
                 text: "#" + (data.id || "")
-                font.family: Style.font.monospace
-                font.pixelSize: Style.space(10)
-                color: Palette.text.muted
+                font.family: "monospace"
+                font.pixelSize: 10
+                color: Quickshell.Colors.textMuted
             }
         }
 
-        // Second line: repo, branch, author, time
         RowLayout {
             Layout.fillWidth: true
-            spacing: Style.space(6)
+            spacing: 6
 
-            // Repo name (clickable)
             Text {
                 text: data.repo || ""
-                font.family: Style.font.monospace
-                font.pixelSize: Style.space(10)
-                color: Palette.accent.secondary
+                font.family: "monospace"
+                font.pixelSize: 10
+                color: Quickshell.Colors.accentSecondary
                 opacity: repoMouse.containsMouse ? 1.0 : 0.7
 
                 MouseArea {
@@ -139,53 +145,46 @@ Item {
 
             Text {
                 text: "\u2192"
-                font.pixelSize: Style.space(9)
-                color: Palette.text.muted
+                font.pixelSize: 9
+                color: Quickshell.Colors.textMuted
                 opacity: 0.4
             }
 
-            // Branch
             Text {
                 text: data.branch || ""
-                font.family: Style.font.monospace
-                font.pixelSize: Style.space(10)
-                color: Palette.text.secondary
-                Layout.maximumWidth: Style.space(120)
+                font.family: "monospace"
+                font.pixelSize: 10
+                color: Quickshell.Colors.textSecondary
+                Layout.maximumWidth: 120
                 elide: Text.ElideRight
             }
 
             Item { Layout.fillWidth: true }
 
-            // Author
             Text {
                 text: data.author || ""
-                font.family: Style.font.family
-                font.pixelSize: Style.space(10)
-                color: Palette.text.muted
+                font.pixelSize: 10
+                color: Quickshell.Colors.textMuted
             }
 
-            // Timestamp
             Text {
                 text: Model.timeAgo(data.updated)
-                font.family: Style.font.family
-                font.pixelSize: Style.space(10)
-                color: Palette.text.muted
+                font.pixelSize: 10
+                color: Quickshell.Colors.textMuted
                 opacity: 0.6
             }
         }
 
-        // Third line: review/CI detail + blocker (only when meaningful)
         RowLayout {
             Layout.fillWidth: true
-            spacing: Style.space(8)
-            visible: hasReviewInfo || hasCiInfo || data.blocker
+            spacing: 8
+            visible: hasReviewInfo || hasCiInfo || !!data.blocker
 
             property bool hasReviewInfo: data.reviews && (data.reviews.approved > 0 || data.reviews.changes_requested > 0)
             property bool hasCiInfo: data.ci && data.ci.total > 0
 
-            // Review summary
             Row {
-                spacing: Style.space(4)
+                spacing: 4
                 visible: parent.hasReviewInfo
 
                 Text {
@@ -195,15 +194,13 @@ Item {
                         if (data.reviews.changes_requested > 0) parts.push("\u2718 " + data.reviews.changes_requested);
                         return parts.join("  ");
                     }
-                    font.family: Style.font.family
-                    font.pixelSize: Style.space(10)
-                    color: data.reviews.changes_requested > 0 ? Palette.status.error : Palette.status.success
+                    font.pixelSize: 10
+                    color: data.reviews.changes_requested > 0 ? Quickshell.Colors.error : Quickshell.Colors.success
                 }
             }
 
-            // CI summary
             Row {
-                spacing: Style.space(3)
+                spacing: 3
                 visible: parent.hasCiInfo
 
                 Text {
@@ -211,55 +208,50 @@ Item {
                         if (!data.ci) return "";
                         return data.ci.passed + "/" + data.ci.total + " checks";
                     }
-                    font.family: Style.font.family
-                    font.pixelSize: Style.space(10)
+                    font.pixelSize: 10
                     color: {
-                        if (!data.ci) return Palette.text.muted;
-                        if (data.ci.failed > 0) return Palette.status.error;
-                        if (data.ci.pending_count > 0) return Palette.status.warning;
-                        return Palette.status.success;
+                        if (!data.ci) return Quickshell.Colors.textMuted;
+                        if (data.ci.failed > 0) return Quickshell.Colors.error;
+                        if (data.ci.pending_count > 0) return Quickshell.Colors.warning;
+                        return Quickshell.Colors.success;
                     }
                 }
             }
 
             Item { Layout.fillWidth: true }
 
-            // Blocker reason
             Text {
                 visible: !!data.blocker
                 text: data.blocker || ""
-                font.family: Style.font.family
-                font.pixelSize: Style.space(10)
+                font.pixelSize: 10
                 font.italic: true
-                color: Palette.status.error
+                color: Quickshell.Colors.error
                 opacity: 0.85
-                Layout.maximumWidth: Style.space(200)
+                Layout.maximumWidth: 200
                 elide: Text.ElideRight
             }
         }
 
-        // Labels row
         Flow {
             Layout.fillWidth: true
-            spacing: Style.space(4)
+            spacing: 4
             visible: data.labels && data.labels.length > 0
 
             Repeater {
                 model: data.labels || []
                 Rectangle {
-                    width: labelText.implicitWidth + Style.space(8)
-                    height: labelText.implicitHeight + Style.space(3)
-                    radius: Style.cornerRadius * 0.25
-                    color: modelData.color ? ("#" + modelData.color) : Palette.surface.secondary
+                    width: labelText.implicitWidth + 8
+                    height: labelText.implicitHeight + 3
+                    radius: 2
+                    color: modelData.color ? ("#" + modelData.color) : Quickshell.Colors.surfaceSecondary
                     opacity: 0.7
 
                     Text {
                         id: labelText
                         anchors.centerIn: parent
                         text: modelData.name || ""
-                        font.family: Style.font.family
-                        font.pixelSize: Style.space(9)
-                        color: Palette.text.primary
+                        font.pixelSize: 9
+                        color: Quickshell.Colors.textPrimary
                     }
                 }
             }
