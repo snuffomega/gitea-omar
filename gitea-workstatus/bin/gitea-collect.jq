@@ -2,7 +2,8 @@
 # Supports Gitea >= 1.19. Actions runs require >= 1.20.
 # Input: --arg url, --arg user, --arg ts,
 #        --argjson prs, --argjson runs, --argjson repo_count,
-#        --argjson max_stale, --argjson repo_failed, --argjson repo_attempted
+#        --argjson max_stale, --argjson repo_failed, --argjson repo_attempted,
+#        --argjson incomplete
 
 # Latest effective review per reviewer: last non-COMMENT, non-DISMISSED review wins.
 # This prevents a stale REQUEST_CHANGES from blocking after the reviewer approves.
@@ -164,6 +165,7 @@ def run_status_bucket:
     repo_count: $repo_count,
     repo_failed: $repo_failed,
     repo_attempted: $repo_attempted,
+    incomplete: $incomplete,
     stale: false,
     max_stale_hours: $max_stale
   },

@@ -64,6 +64,7 @@ run_jq() {
     --argjson max_stale 6 \
     --argjson repo_failed 0 \
     --argjson repo_attempted 3 \
+    --argjson incomplete false \
     -f "$JQ_SCRIPT"
 }
 

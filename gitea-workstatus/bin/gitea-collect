@@ -82,8 +82,9 @@ api() {
 }
 
 # api_paginated ENDPOINT LIMIT MAX_PAGES [EXTRA_PARAMS]
-# Returns merged JSON array on stdout. Exit 0 if >=1 page succeeded, exit 1 if zero.
-# A failure on a later page does NOT discard earlier pages — partial data is returned.
+# Prints merged JSON array. Exit 0 if >=1 page succeeded. When coverage ended
+# early because a non-200 page interrupted pagination, API_COVERAGE=PARTIAL is
+# set (usable when called without command substitution).
 api_paginated() {
   local endpoint="$1"
   local limit="${2:-50}"
@@ -93,22 +94,30 @@ api_paginated() {
   local page=1
   local pages_ok=0
 
+  API_COVERAGE="COMPLETE"
+
   while [ "$page" -le "$max_pages" ]; do
     local url="${GITEA_URL}/api/v1${endpoint}?page=${page}&limit=${limit}"
     if [ -n "$extra" ]; then
       url="${url}&${extra}"
     fi
     local response
-    response=$(curl -sS --max-time 15 -w '\n%{http_code}' \
+    if ! response=$(curl -sS --max-time 15 -w '\n%{http_code}' \
       -H "Authorization: token $GITEA_TOKEN" \
       -H "Accept: application/json" \
-      "$url" 2>/dev/null) || break
+      "$url" 2>/dev/null); then
+      API_COVERAGE="PARTIAL"
+      break
+    fi
 
     local http_code body
     http_code=$(echo "$response" | tail -1)
     body=$(echo "$response" | sed '$d')
 
-    [ "$http_code" != "200" ] && break
+    if [ "$http_code" != "200" ]; then
+      API_COVERAGE="PARTIAL"
+      break
+    fi
 
     local count
     count=$(echo "$body" | jq 'if type == "array" then length else 0 end' 2>/dev/null) || break
@@ -152,21 +161,23 @@ fetch_action_runs() {
   api "/repos/${owner}/${repo}/actions/runs" 1 20
 }
 
-# fetch_action_runs_with_code: returns "HTTP_CODE BODY" on stdout, exit 0 always.
-# Lets caller distinguish 404 (Actions not enabled) from 500 (server error).
+# fetch_action_runs_with_code: first line is HTTP code or sentinel, rest is body.
+# Never manufacture 404 on transport failure. 404 means "Actions not enabled" (ok).
+# Non-200 HTTP (e.g. 500) and TRANSPORT both mean "failure" (partial).
 fetch_action_runs_with_code() {
   local owner="$1" repo="$2"
   local url="${GITEA_URL}/api/v1/repos/${owner}/${repo}/actions/runs?page=1&limit=20"
-  local response http_code body
-  response=$(curl -sS --max-time 15 -w '\n%{http_code}' \
+  local response http_code
+  if ! response=$(curl -sS --max-time 15 -w '\n%{http_code}' \
     -H "Authorization: token $GITEA_TOKEN" \
     -H "Accept: application/json" \
-    "$url" 2>/dev/null) || { echo "404"; return 0; }
-
+    "$url" 2>/dev/null); then
+    echo "TRANSPORT"
+    return 0
+  fi
   http_code=$(echo "$response" | tail -1)
-  body=$(echo "$response" | sed '$d')
   echo "${http_code}"
-  echo "$body"
+  echo "$response" | sed '$d'
   return 0
 }
 
@@ -176,7 +187,18 @@ user_json=$(fetch_user) || die "Cannot authenticate with Gitea"
 username=$(echo "$user_json" | jq -r '.login // empty')
 [ -z "$username" ] && die "Cannot determine username"
 
-repos_json=$(fetch_repos) || die "Cannot list repositories"
+# Run fetch_repos without command substitution so API_COVERAGE set inside
+# api_paginated survives ($() spawns a subshell, dropping shell globals).
+unset API_COVERAGE
+API_COVERAGE="COMPLETE"
+repos_json_tmp=$(mktemp)
+if ! fetch_repos > "$repos_json_tmp"; then
+  rm -f "$repos_json_tmp"
+  die "Cannot list repositories"
+fi
+repos_json=$(cat "$repos_json_tmp")
+rm -f "$repos_json_tmp"
+repos_coverage="$API_COVERAGE"
 repo_count=$(echo "$repos_json" | jq 'length')
 
 if ! echo "$repos_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
@@ -238,9 +260,10 @@ for row in $(echo "$repos_json" | jq -r '.[] | @base64'); do
 
     echo "$prs" > "$tmpdir/prs_${idx}.json"
 
-    # Always attempt Actions runs regardless of has_pull_requests
-    # Distinguish 404 (Actions not enabled — ok) from 500 (server error — partial)
-    runs_output=$(fetch_action_runs_with_code "$owner" "$repo" 2>/dev/null) || runs_output="404"
+    # Always attempt Actions runs regardless of has_pull_requests.
+    # Only HTTP 404 means "Actions not enabled" (ok). Anything else
+    # non-200 (500, TRANSPORT failure, etc.) is a failure -> partial.
+    runs_output=$(fetch_action_runs_with_code "$owner" "$repo")
     runs_http_code=$(echo "$runs_output" | head -1)
     runs_raw=$(echo "$runs_output" | sed '1d')
 
@@ -252,7 +275,6 @@ for row in $(echo "$repos_json" | jq -r '.[] | @base64'); do
         '[.[]? | . + {"_repo": $fn}]' > "$tmpdir/runs_${idx}.json"
     else
       echo "[]" > "$tmpdir/runs_${idx}.json"
-      # 404 = Actions not enabled (ok). 500 or other = server error (partial).
       if [ "$runs_http_code" != "404" ]; then
         repo_status="partial"
       fi
@@ -294,13 +316,11 @@ for f in "$tmpdir"/status_*; do
   fi
 done
 
-# --- Stale data carry-forward ---
-pr_count_now=$(echo "$all_prs" | jq 'length')
-run_count_now=$(echo "$all_runs" | jq 'length')
+incomplete=false
+[ "$repos_coverage" = "PARTIAL" ] && incomplete=true
 
-if { [ "$pr_count_now" -eq 0 ] || [ "$run_count_now" -eq 0 ]; } && \
-   [ "$repo_attempted" -gt 0 ] && \
-   [ -f "$OUTPUT" ]; then
+# Carry-forward engages on failure or incomplete coverage — never on empty lists.
+if [ "$repos_coverage" = "PARTIAL" ] && [ "$repo_attempted" -gt 0 ] && [ -f "$OUTPUT" ]; then
   prev_ts=$(jq -r '.meta.collected_at // empty' "$OUTPUT" 2>/dev/null || echo "")
   if [ -n "$prev_ts" ]; then
     prev_epoch=$(date -d "$prev_ts" +%s 2>/dev/null || echo 0)
@@ -326,6 +346,7 @@ overview=$(jq -n \
   --argjson max_stale "$MAX_STALE_HOURS" \
   --argjson repo_failed "$repo_failed" \
   --argjson repo_attempted "$repo_attempted" \
+  --argjson incomplete "$incomplete" \
   -f "$JQ_SCRIPT")
 
 atomic_write "$OUTPUT" "$overview"
