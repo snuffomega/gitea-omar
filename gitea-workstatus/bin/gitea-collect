@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+# Gitea work-status collector — fetches PRs, reviews, and CI status
+# Writes JSON to ~/.local/state/omarchy/gitea-workstatus/overview.json
+# Reads token from ~/.config/gitea-workstatus/credentials
+set -euo pipefail
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/gitea-workstatus"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gitea-workstatus"
+CRED_FILE="$CONFIG_DIR/credentials"
+OUTPUT="$STATE_DIR/overview.json"
+LOCK_FILE="$STATE_DIR/.collect.lock"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+JQ_SCRIPT="$SCRIPT_DIR/gitea-collect.jq"
+
+MAX_STALE_HOURS="${GITEA_WS_MAX_STALE_HOURS:-6}"
+
+mkdir -p "$STATE_DIR" "$CONFIG_DIR"
+
+cleanup() { rm -f "$LOCK_FILE"; }
+trap cleanup EXIT
+
+if [ -f "$LOCK_FILE" ]; then
+  lock_age=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
+  if [ "$lock_age" -lt 300 ]; then
+    exit 0
+  fi
+fi
+touch "$LOCK_FILE"
+
+die() { echo "{\"error\": \"$1\", \"ts\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$OUTPUT"; exit 1; }
+
+if [ ! -f "$CRED_FILE" ]; then
+  die "No credentials file. Create $CRED_FILE with GITEA_URL and GITEA_TOKEN."
+fi
+
+source "$CRED_FILE"
+
+GITEA_URL="${GITEA_URL:-}"
+GITEA_TOKEN="${GITEA_TOKEN:-}"
+
+[ -z "$GITEA_URL" ] && die "GITEA_URL not set in $CRED_FILE"
+[ -z "$GITEA_TOKEN" ] && die "GITEA_TOKEN not set in $CRED_FILE"
+
+GITEA_URL="${GITEA_URL%/}"
+
+api() {
+  local endpoint="$1"
+  local page="${2:-1}"
+  local limit="${3:-50}"
+  local response
+  response=$(curl -sfS --max-time 15 \
+    -H "Authorization: token $GITEA_TOKEN" \
+    -H "Accept: application/json" \
+    "${GITEA_URL}/api/v1${endpoint}?page=${page}&limit=${limit}&token=" 2>&1) || {
+    echo '{"_error": "request_failed", "_endpoint": "'"$endpoint"'"}'
+    return 1
+  }
+  echo "$response"
+}
+
+api_paginated() {
+  local endpoint="$1"
+  local limit="${2:-50}"
+  local max_pages="${3:-5}"
+  local all="[]"
+  local page=1
+
+  while [ "$page" -le "$max_pages" ]; do
+    local response
+    response=$(curl -sS --max-time 15 -w '\n%{http_code}' \
+      -H "Authorization: token $GITEA_TOKEN" \
+      -H "Accept: application/json" \
+      "${GITEA_URL}/api/v1${endpoint}?page=${page}&limit=${limit}" 2>/dev/null) || break
+
+    local http_code body
+    http_code=$(echo "$response" | tail -1)
+    body=$(echo "$response" | sed '$d')
+
+    [ "$http_code" != "200" ] && break
+
+    local count
+    count=$(echo "$body" | jq 'length' 2>/dev/null) || break
+    [ "$count" -eq 0 ] && break
+
+    all=$(echo "$all" "$body" | jq -s '.[0] + .[1]')
+    [ "$count" -lt "$limit" ] && break
+    page=$((page + 1))
+  done
+
+  echo "$all"
+}
+
+fetch_user() {
+  api "/user"
+}
+
+fetch_repos() {
+  api_paginated "/user/repos" 50 10
+}
+
+fetch_prs_for_repo() {
+  local owner="$1" repo="$2"
+  api_paginated "/repos/${owner}/${repo}/pulls?state=open" 30 3
+}
+
+fetch_reviews_for_pr() {
+  local owner="$1" repo="$2" index="$3"
+  api "/repos/${owner}/${repo}/pulls/${index}/reviews"
+}
+
+fetch_commit_status() {
+  local owner="$1" repo="$2" sha="$3"
+  api "/repos/${owner}/${repo}/commits/${sha}/status"
+}
+
+fetch_action_runs() {
+  local owner="$1" repo="$2"
+  api "/repos/${owner}/${repo}/actions/runs" 1 20
+}
+
+now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+user_json=$(fetch_user) || die "Cannot authenticate with Gitea"
+username=$(echo "$user_json" | jq -r '.login // empty')
+[ -z "$username" ] && die "Cannot determine username"
+
+repos_json=$(fetch_repos)
+repo_count=$(echo "$repos_json" | jq 'length')
+
+all_prs="[]"
+all_runs="[]"
+failed_repos="[]"
+
+collect_repo() {
+  local owner="$1" repo="$2" full_name="${owner}/${repo}"
+  local has_actions
+
+  prs=$(fetch_prs_for_repo "$owner" "$repo" 2>/dev/null) || prs="[]"
+
+  if echo "$prs" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    local pr_count
+    pr_count=$(echo "$prs" | jq 'length')
+
+    for i in $(seq 0 $((pr_count - 1))); do
+      local pr_index pr_sha
+      pr_index=$(echo "$prs" | jq -r ".[$i].number")
+      pr_sha=$(echo "$prs" | jq -r ".[$i].head.sha // empty")
+
+      reviews="[]"
+      reviews=$(fetch_reviews_for_pr "$owner" "$repo" "$pr_index" 2>/dev/null) || reviews="[]"
+
+      commit_status="{}"
+      if [ -n "$pr_sha" ]; then
+        commit_status=$(fetch_commit_status "$owner" "$repo" "$pr_sha" 2>/dev/null) || commit_status="{}"
+      fi
+
+      prs=$(echo "$prs" | jq --argjson idx "$i" \
+        --argjson revs "$reviews" \
+        --argjson cs "$commit_status" \
+        '.[$idx]._reviews = $revs | .[$idx]._commit_status = $cs')
+    done
+
+    prs=$(echo "$prs" | jq --arg fn "$full_name" '[.[] | . + {"_repo": $fn}]')
+    echo "$prs"
+  else
+    echo "[]"
+  fi
+}
+
+tmpdir=$(mktemp -d)
+
+idx=0
+for row in $(echo "$repos_json" | jq -r '.[] | @base64'); do
+  decoded=$(echo "$row" | base64 -d)
+  owner=$(echo "$decoded" | jq -r '.owner.login')
+  repo=$(echo "$decoded" | jq -r '.name')
+  has_prs=$(echo "$decoded" | jq -r '.has_pull_requests // true')
+
+  [ "$has_prs" = "false" ] && continue
+
+  (
+    result=$(collect_repo "$owner" "$repo" 2>/dev/null) || result="[]"
+    echo "$result" > "$tmpdir/prs_${idx}.json"
+
+    runs=$(fetch_action_runs "$owner" "$repo" 2>/dev/null) || runs="{}"
+    if echo "$runs" | jq -e '.workflow_runs' >/dev/null 2>&1; then
+      echo "$runs" | jq --arg fn "${owner}/${repo}" \
+        '[.workflow_runs[]? | . + {"_repo": $fn}]' > "$tmpdir/runs_${idx}.json"
+    else
+      echo "[]" > "$tmpdir/runs_${idx}.json"
+    fi
+  ) &
+
+  idx=$((idx + 1))
+
+  # Limit concurrent subshells
+  if [ $((idx % 8)) -eq 0 ]; then
+    wait
+  fi
+done
+
+wait
+
+# Merge all results
+for f in "$tmpdir"/prs_*.json; do
+  [ -f "$f" ] || continue
+  content=$(cat "$f")
+  all_prs=$(echo "$all_prs" "$content" | jq -s '.[0] + .[1]')
+done
+
+for f in "$tmpdir"/runs_*.json; do
+  [ -f "$f" ] || continue
+  content=$(cat "$f")
+  all_runs=$(echo "$all_runs" "$content" | jq -s '.[0] + .[1]')
+done
+
+rm -rf "$tmpdir"
+
+# Carry forward stale data if this run had connection issues
+prev_output=""
+if [ -f "$OUTPUT" ]; then
+  prev_output=$(cat "$OUTPUT")
+fi
+
+# Build the overview through jq
+overview=$(jq -n \
+  --arg url "$GITEA_URL" \
+  --arg user "$username" \
+  --arg ts "$now_ts" \
+  --argjson prs "$all_prs" \
+  --argjson runs "$all_runs" \
+  --argjson repo_count "$repo_count" \
+  --argjson max_stale "$MAX_STALE_HOURS" \
+  -f "$JQ_SCRIPT")
+
+echo "$overview" > "$OUTPUT"
+echo "Collected: $(echo "$all_prs" | jq 'length') PRs, $(echo "$all_runs" | jq 'length') runs at $now_ts"
