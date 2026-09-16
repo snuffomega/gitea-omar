@@ -3,7 +3,8 @@
 # Input: --arg url, --arg user, --arg ts,
 #        --argjson prs, --argjson runs, --argjson repo_count,
 #        --argjson max_stale, --argjson repo_failed, --argjson repo_attempted,
-#        --argjson incomplete
+#        --argjson incomplete, --argjson carried, --argjson carried_repos,
+#        --argjson failed_resources
 
 # Latest effective review per reviewer: last non-COMMENT, non-DISMISSED review wins.
 # This prevents a stale REQUEST_CHANGES from blocking after the reviewer approves.
@@ -166,6 +167,9 @@ def run_status_bucket:
     repo_failed: $repo_failed,
     repo_attempted: $repo_attempted,
     incomplete: $incomplete,
+    carried: $carried,
+    carried_repos: $carried_repos,
+    failed_resources: $failed_resources,
     stale: false,
     max_stale_hours: $max_stale
   },

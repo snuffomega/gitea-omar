@@ -155,6 +155,9 @@ if jq -n -f "$JQ_SCRIPT" \
   --argjson repo_count 0 --argjson max_stale 6 \
   --argjson repo_failed 0 --argjson repo_attempted 0 \
   --argjson incomplete false \
+  --argjson carried false \
+  --argjson carried_repos "[]" \
+  --argjson failed_resources "{}" \
   >/dev/null 2>&1; then
   echo "  PASS: jq syntax valid"
   PASS=$((PASS + 1))
@@ -568,7 +571,75 @@ else
   s=$(jq '.meta.stale // false' "$mock_state" 2>/dev/null)
   assert_eq "A6: snapshot marked stale (not healthy)" "true" "$s"
 fi
-unset GITEA_WS_MAX_STALE_HOURS
+# ── Test 20: per-resource failure handling + explicit exit/stderr retention ──
+echo "Test 20: per-resource failures (PR 500 carry-forward, review failure reported)"
+setup_env; tmpdir="$_SETUP_TMP"
+mock_state="$XDG_STATE_HOME/omarchy/gitea-workstatus/overview.json"
+orig_ts=$(date -u -d "1 hour ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2026-09-15T00:00:00Z")
+cat > "$mock_state" << OLD
+{"meta":{"collected_at":"$orig_ts","stale":false},"summary":{"open_prs":1},"sections":{"all_prs":[{"id":1,"repo":"t/r"}],"running":[],"recently_completed":[{"repo":"t/r","id":9}],"attention":[],"my_prs":[],"review_queue":[]},"repos":["t/r"]}
+OLD
+cat > "$tmpdir/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""; write=false
+for a in "$@"; do case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
+p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
+case "$p" in
+  /user) echo '{"login":"testuser"}'; $write && printf '\n200' ;;
+  /user/repos) echo '[{"owner":{"login":"t"},"name":"r","has_pull_requests":true}]'; $write && printf '\n200' ;;
+  /repos/*/pulls) echo '{"m":"e"}'; $write && printf '\n500' ;;
+  /repos/*/actions/runs) echo '{"total_count":0,"workflow_runs":[]}'; $write && printf '\n200' ;;
+  *) echo '[]'; $write && printf '\n200' ;;
+esac
+exit 0
+EOF
+chmod +x "$tmpdir/curl"
+# retain stderr, assert exit status
+errlog="$tmpdir/collector.stderr"
+PATH="$tmpdir:$PATH" bash "$COLLECTOR" 2>"$errlog"
+exit_status=$?
+assert_eq "PR 500 exits 0 (partial success)" "0" "$exit_status"
+# last-good PR for this repo should be carried forward — verify via carried_repos meta
+assert_eq "carried PR preserved (t/r in carried_repos)" "true" "$(jq '.meta.carried_repos | index("t/r") != null' "$mock_state" 2>/dev/null)"
+# explicit failure metadata present for the repo, including prs
+meta_has=$(jq '.meta | has("failed_resources")' "$mock_state" 2>/dev/null)
+assert_eq "failed_resources present in meta" "true" "$meta_has"
+fr=$(jq -r '.meta.failed_resources["t/r"] // [] | index("prs") | tostring' "$mock_state" 2>/dev/null)
+assert_eq "prs reported as failed resource" "0" "$fr"
+carried=$(jq '.meta.carried // false' "$mock_state" 2>/dev/null)
+assert_eq "carried flagged" "true" "$carried"
+# stderr retained (not hidden)
+assert_file_exists "stderr log retained" "$errlog"
+rm -rf "$tmpdir"
+
+# ── Test 21: review and commit-status failures are reported as failed resources ──
+echo "Test 21: review/status failures reported per-PR as failed resources"
+setup_env; tmpdir="$_SETUP_TMP"
+mock_state="$XDG_STATE_HOME/omarchy/gitea-workstatus/overview.json"
+cat > "$tmpdir/curl" << 'EOF'
+#!/usr/bin/env bash
+url=""; write=false
+for a in "$@"; do case "$a" in https://*) url="$a";; *http_code*) write=true;; esac; done
+p=$(echo "$url" | grep -oP '/api/v1\K[^?]*' || echo "")
+case "$p" in
+  /user) echo '{"login":"testuser"}'; $write && printf '\n200' ;;
+  /user/repos) echo '[{"owner":{"login":"t"},"name":"r","has_pull_requests":true}]'; $write && printf '\n200' ;;
+  /repos/*/pulls) echo '[{"number":7,"title":"P","state":"open","draft":false,"user":{"login":"t"},"head":{"ref":"m","sha":"a"},"base":{"ref":"m"},"created_at":"2026-09-15T09:00:00Z","updated_at":"2026-09-15T09:00:00Z","html_url":"https://x/r/pulls/7","mergeable":true,"labels":[],"requested_reviewers":[]}]'; $write && printf '\n200' ;;
+  /repos/*/pulls/*/reviews) echo 'not json'; $write && printf '\n500' ;;
+  /repos/*/commits/*/status) exit 28 ;; # transport failure
+  /repos/*/actions/runs) echo '{"total_count":0,"workflow_runs":[]}'; $write && printf '\n200' ;;
+  *) echo '[]'; $write && printf '\n200' ;;
+esac
+exit 0
+EOF
+chmod +x "$tmpdir/curl"
+PATH="$tmpdir:$PATH" bash "$COLLECTOR" 2>/dev/null || true
+frv=$(jq -r '.meta.failed_resources["t/r"] // [] | map(select(startswith("review:7")))[0] // ""' "$mock_state" 2>/dev/null)
+fcs=$(jq -r '.meta.failed_resources["t/r"] // [] | map(select(startswith("status:7")))[0] // ""' "$mock_state" 2>/dev/null)
+assert_eq "review:7 reported as failed resource" "review:7" "$frv"
+assert_eq "status:7 reported as failed resource" "status:7" "$fcs"
+# successful PR still published (PR itself succeeded even though enrichment failed)
+assert_eq "PR published despite review failure" "1" "$(jq '[.sections.all_prs[]?] | length' "$mock_state" 2>/dev/null)"
 rm -rf "$tmpdir"
 
 echo ""

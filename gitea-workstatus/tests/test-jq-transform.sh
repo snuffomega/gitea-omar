@@ -65,6 +65,9 @@ run_jq() {
     --argjson repo_failed 0 \
     --argjson repo_attempted 3 \
     --argjson incomplete false \
+    --argjson carried false \
+    --argjson carried_repos "[]" \
+    --argjson failed_resources "{}" \
     -f "$JQ_SCRIPT"
 }
 
